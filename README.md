@@ -1,350 +1,239 @@
-# Shoutcast Audio Encoder & Decoder for Raspberry Pi 5
+# Momento Audio Streaming System
 
-Complete guide and implementation for streaming audio to and receiving audio from Shoutcast/Icecast servers on Raspberry Pi 5.
+A modern web-based audio streaming system for Raspberry Pi (Momento) with built-in encoder, decoder, and Icecast server.
 
-## Table of Contents
-1. [Overview](#overview)
-2. [Prerequisites](#prerequisites)
-3. [Installation](#installation)
-4. [Encoder Setup](#encoder-setup)
-5. [Decoder Setup](#decoder-setup)
-6. [Usage](#usage)
-7. [Troubleshooting](#troubleshooting)
+## Features
 
-## Overview
+### 🎙️ Audio Encoder
+- Real-time audio encoding using Darkice
+- Configurable bitrate, sample rate, and format
+- Support for multiple audio input devices
+- Real-time audio level monitoring (VU meter)
+- Buffer size configuration for smooth encoding
 
-This project provides:
-- **Encoder**: Stream audio from Raspberry Pi 5 to a Shoutcast/Icecast server
-- **Decoder**: Receive and play Shoutcast/Icecast streams on Raspberry Pi 5
+### 📻 Built-in Icecast Server
+- Integrated Icecast2 streaming server
+- No external server required
+- Web-based start/stop control
+- Default configuration ready to use
+- Admin interface accessible via web
 
-### Components
-- **Darkice**: Audio encoder for streaming
-- **mpg123**: Audio decoder/player for receiving streams
-- **ALSA**: Audio system for capture and playback
-- **Systemd services**: Auto-start on boot
+### 🔊 Audio Decoder/Player
+- **VLC-based player** - Handles all audio formats (MP3, AAC, OGG, FLAC, WAV, M3U, etc.)
+- **RAM-based buffering** - All buffers stored in RAM for fast access and smooth playback
+- Configurable network buffer (5-120 seconds, default: 30s)
+- Pre-buffer cache (0-30 seconds, default: 10s)
+- Auto-reconnect on network issues
+- High-quality audio resampling
+- Support for HTTP, HTTPS, and other network protocols
 
-## Prerequisites
+### ⚙️ Settings & Configuration
+- Network configuration (IP, netmask, gateway, DHCP/static)
+- USB audio device detection and selection
+- Password management (unified for UI and Icecast)
+- Buffer size configuration
+- Playback device persistence
 
-### Hardware
-- Raspberry Pi 5
-- MicroSD card (32GB+ recommended)
-- Audio input device (USB microphone, USB sound card, or line-in)
-- Audio output device (speakers, headphones, or HDMI audio)
-- Internet connection
+### 🔐 Security
+- User authentication system
+- Password-protected configuration changes
+- Session management
+- Secure password hashing
 
-### Software
-- Raspberry Pi OS (64-bit recommended for Pi 5)
-- Root/sudo access
+## Requirements
+
+- Raspberry Pi (tested on Raspberry Pi OS)
+- Python 3.7+
+- Flask
+- Darkice (for encoding)
+- VLC (cvlc) - **Required for playback**
+- Icecast2 (for streaming server)
+- ALSA audio system
 
 ## Installation
 
-### Step 1: Update System
-
+1. Clone the repository:
 ```bash
-sudo apt update && sudo apt upgrade -y
+git clone https://github.com/Lahzehmra/ras-enc.git
+cd ras-enc
 ```
 
-### Step 2: Install Dependencies
-
-Run the installation script:
-
+2. Install dependencies:
 ```bash
-chmod +x install.sh
-./install.sh
+sudo apt-get update
+sudo apt-get install -y python3-pip python3-venv darkice vlc icecast2 alsa-utils
 ```
 
-Or manually install:
-
+3. Set up Python virtual environment:
 ```bash
-sudo apt install -y darkice alsa-utils mpg123 vlc libmp3lame-dev libvorbis-dev libasound2-dev
+python3 -m venv venv
+source venv/bin/activate
+pip install flask
 ```
 
-### Step 3: Configure Audio
-
-#### Check Audio Devices
-
+4. Configure Icecast (optional - defaults are provided):
 ```bash
-# List audio input devices
-arecord -l
-
-# List audio output devices
-aplay -l
-
-# Test microphone
-arecord -d 5 -f cd test.wav
-aplay test.wav
+sudo cp icecast.xml /etc/icecast2/icecast.xml
+sudo chown icecast2:icecast /etc/icecast2/icecast.xml
 ```
 
-#### Set Default Audio Device (if needed)
-
-Edit `/etc/asound.conf` or create `~/.asoundrc`:
-
-```
-pcm.!default {
-    type hw
-    card 1
-    device 0
-}
-
-ctl.!default {
-    type hw
-    card 1
-}
-```
-
-## Encoder Setup
-
-### Step 1: Configure Darkice
-
-1. Copy the example configuration:
+5. Run the application:
 ```bash
-cp darkice.conf.example darkice.conf
+source venv/bin/activate
+python app.py
 ```
 
-2. Edit `darkice.conf` with your Shoutcast server details:
-   - Server address
-   - Port (usually 8000)
-   - Mount point
-   - Password
-   - Audio source device
+6. Access the web interface:
+   - Open browser: `http://<raspberry-pi-ip>:5000`
+   - Default credentials: `admin` / `hackme` (change immediately!)
 
-### Step 2: Test Encoder
+## Architecture
 
-```bash
-# Test with configuration file
-darkice -c darkice.conf
+### Player System
+- **VLC (cvlc) is the ONLY player** - Simplified architecture
+- Handles all audio formats and network protocols
+- RAM-based buffering for optimal performance
+- No fallback players needed - VLC handles everything
+
+### Buffer System
+All buffers are stored in **RAM** (not disk) for fast access:
+- **Network Buffer**: 30 seconds default (5-120s range)
+- **File Cache**: 2x network buffer (60s for 30s network buffer)
+- **Live Cache**: 10 seconds default (0-30s range) - pre-buffers before playback starts
+
+### Audio Flow
+```
+Encoder: Microphone/Line Input → Darkice → Icecast Server
+Decoder: Network Stream → VLC (RAM buffers) → ALSA Output
 ```
 
-### Step 3: Run as Service
+## Configuration
 
-```bash
-# Copy service file
-sudo cp darkice.service /etc/systemd/system/
+### Default Settings
+- **Encoder Buffer**: 10 seconds
+- **Decoder Network Buffer**: 30 seconds
+- **Decoder Playback Cache**: 10 seconds
+- **Icecast Port**: 8000
+- **Web UI Port**: 5000
 
-# Edit service file if needed
-sudo nano /etc/systemd/system/darkice.service
-
-# Enable and start service
-sudo systemctl daemon-reload
-sudo systemctl enable darkice.service
-sudo systemctl start darkice.service
-
-# Check status
-sudo systemctl status darkice.service
-```
-
-## Decoder Setup
-
-### Step 1: Test Stream Playback
-
-```bash
-# Play a Shoutcast stream
-mpg123 http://stream.example.com:8000/stream
-
-# Or with VLC
-vlc http://stream.example.com:8000/stream
-```
-
-### Step 2: Create Playback Script
-
-Use the provided `play_stream.sh` script:
-
-```bash
-chmod +x play_stream.sh
-./play_stream.sh http://stream.example.com:8000/stream
-```
-
-### Step 3: Run as Service (Optional)
-
-For continuous playback, use the systemd service:
-
-```bash
-sudo cp stream_player.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable stream_player.service
-sudo systemctl start stream_player.service
-```
+### Buffer Recommendations
+- **For stable networks**: 15-30 seconds network buffer
+- **For unstable networks**: 30-60 seconds network buffer
+- **For best quality**: 10+ seconds playback cache
+- **For low latency**: 5-10 seconds total buffer
 
 ## Usage
 
-### Encoder (Streaming)
+### Starting the Encoder
+1. Select input audio device
+2. Configure server settings (if using external server)
+3. Set bitrate and sample rate
+4. Click "Start Streaming"
 
-#### Start Streaming
-```bash
-# Manual start
-darkice -c darkice.conf
+### Starting the Decoder
+1. Enter stream URL (MP3, AAC, M3U, etc.)
+2. Select output audio device
+3. Configure buffer sizes (optional)
+4. Click "Start Playback"
 
-# Or via systemd
-sudo systemctl start darkice
+### Using Built-in Icecast Server
+1. Click "Start Server" in the Server tab
+2. Configure encoder to use: `localhost:8000`
+3. Stream URL will be: `http://<pi-ip>:8000/stream`
+
+## File Structure
+
+```
+ras-enc/
+├── app.py                 # Main Flask application
+├── templates/
+│   ├── index.html        # Main web UI
+│   └── settings.html     # Settings page
+├── icecast.xml           # Icecast configuration
+├── darkice.conf          # Darkice configuration template
+├── install_clean.sh      # Installation script
+└── README.md             # This file
 ```
 
-#### Stop Streaming
-```bash
-# Manual stop (Ctrl+C)
-# Or via systemd
-sudo systemctl stop darkice
-```
+## API Endpoints
 
-#### View Logs
-```bash
-sudo journalctl -u darkice -f
-```
+### Authentication
+- `POST /api/login` - User login
+- `GET /api/logout` - User logout
+- `GET /api/auth/status` - Check authentication status
 
-### Decoder (Receiving)
+### Encoder
+- `POST /api/encoder/start` - Start encoder
+- `POST /api/encoder/stop` - Stop encoder
+- `GET /api/encoder/status` - Get encoder status
+- `GET /api/encoder/levels` - Get audio levels
 
-#### Play Stream
-```bash
-# Using mpg123
-mpg123 http://your-server.com:8000/stream
+### Decoder
+- `POST /api/decoder/start` - Start decoder
+- `POST /api/decoder/stop` - Stop decoder
+- `GET /api/decoder/status` - Get decoder status
+- `POST /api/decoder/config` - Save decoder configuration
 
-# Using the script
-./play_stream.sh http://your-server.com:8000/stream
+### Server
+- `POST /api/icecast/start` - Start Icecast server
+- `POST /api/icecast/stop` - Stop Icecast server
+- `GET /api/icecast/status` - Get server status
 
-# Using VLC
-vlc http://your-server.com:8000/stream
-```
-
-#### Stop Playback
-```bash
-# Press Ctrl+C or kill the process
-pkill mpg123
-```
-
-## Configuration Examples
-
-### Encoder Configuration (darkice.conf)
-
-```ini
-[general]
-duration = 0        # 0 = infinite
-bufferSecs = 5
-reconnect = yes
-
-[input]
-device = hw:1,0     # Your audio input device
-sampleRate = 44100
-bitsPerSample = 16
-channel = 2
-
-[icecast2-0]
-bitrateMode = cbr
-bitrate = 128
-format = mp3
-server = your-server.com
-port = 8000
-password = yourpassword
-mountPoint = /stream
-name = My Stream
-description = Raspberry Pi Stream
-```
-
-### Decoder Configuration
-
-Edit `play_stream.sh` and set your stream URL:
-
-```bash
-STREAM_URL="http://your-server.com:8000/stream"
-```
+### Settings
+- `GET /api/settings` - Get all settings
+- `POST /api/settings` - Update settings
+- `POST /api/settings/password` - Change password
 
 ## Troubleshooting
 
-### Encoder Issues
+### No Audio Output
+- Check audio device selection
+- Verify ALSA volume controls are unmuted
+- Check buffer sizes (increase for unstable networks)
+- Ensure VLC (cvlc) is installed: `sudo apt-get install vlc`
 
-**Problem: No audio input detected**
-```bash
-# Check audio devices
-arecord -l
+### Poor Playback Quality
+- Increase network buffer (30-60 seconds)
+- Increase playback cache (10-20 seconds)
+- Check network connection stability
+- Verify stream URL is accessible
 
-# Test recording
-arecord -d 5 test.wav
+### Encoder Not Starting
+- Check input device selection
+- Verify Darkice is installed
+- Check audio permissions
+- Review system logs
 
-# Adjust device in darkice.conf
-```
+## Performance Notes
 
-**Problem: Connection refused**
-- Check server address and port
-- Verify firewall settings
-- Check server password and mount point
+- **RAM Usage**: Buffers are stored in RAM. For 30s buffer at 44.1kHz stereo:
+  - Network buffer: ~5MB RAM
+  - File cache: ~10MB RAM
+  - Total: ~15MB RAM per stream
 
-**Problem: High CPU usage**
-- Reduce sample rate in darkice.conf
-- Lower bitrate
-- Use hardware encoding if available
+- **CPU Usage**: VLC is efficient, typically <5% CPU on Raspberry Pi 4
 
-### Decoder Issues
+- **Network**: Buffers help handle network jitter and packet loss
 
-**Problem: No audio output**
-```bash
-# Check audio devices
-aplay -l
+## Security Notes
 
-# Test playback
-aplay test.wav
-
-# Check volume
-alsamixer
-```
-
-**Problem: Stream won't connect**
-- Verify stream URL is correct
-- Check network connection
-- Try different player (mpg123 vs vlc)
-
-### General Issues
-
-**Check audio system:**
-```bash
-# List all audio devices
-cat /proc/asound/cards
-
-# Test ALSA
-speaker-test -t wav -c 2
-```
-
-**Check network:**
-```bash
-# Test connection to server
-curl -I http://your-server.com:8000/stream
-```
-
-## Advanced Configuration
-
-### Multiple Streams
-Run multiple Darkice instances with different config files:
-```bash
-darkice -c darkice1.conf &
-darkice -c darkice2.conf &
-```
-
-### Recording While Streaming
-Use `tee` to split audio:
-```bash
-arecord -f cd - | tee stream.wav | darkice -c darkice.conf
-```
-
-### Monitoring
-Monitor stream quality:
-```bash
-# Check encoder status
-sudo systemctl status darkice
-
-# Monitor network usage
-iftop -i wlan0
-
-# Check CPU/memory
-htop
-```
+- **Change default password immediately** after first login
+- Use strong passwords for production
+- Consider HTTPS for production deployments
+- Restrict network access if needed
 
 ## License
 
 This project is provided as-is for educational and personal use.
 
+## Contributing
+
+Contributions are welcome! Please ensure code follows the existing style and includes appropriate error handling.
+
 ## Support
 
-For issues:
-1. Check logs: `sudo journalctl -u darkice`
-2. Verify configuration files
-3. Test audio devices independently
-4. Check network connectivity
+For issues and questions, please open an issue on the GitHub repository.
 
+---
 
+**Note**: This system uses VLC as the exclusive player for all audio formats. All buffers are stored in RAM for optimal performance. The simplified architecture makes the codebase easier to maintain and more reliable.

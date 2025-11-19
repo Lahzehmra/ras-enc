@@ -401,18 +401,25 @@
                                 </small>
                             </div>
                         <div class="form-group">
-                            <label>Buffer Size (seconds)</label>
-                            <input type="number" id="decoder-buffer-secs" name="decoder-buffer-secs" value="5" min="1" max="60" step="1" required>
+                            <label>Network Buffer Size (seconds)</label>
+                            <input type="number" id="decoder-buffer-secs" name="decoder-buffer-secs" value="30" min="5" max="120" step="1" required>
                             <small style="color: #6b7280; display: block; margin-top: 5px;">
-                                Audio buffer size in seconds (1-60). Larger values reduce dropouts but increase latency. Decoder will auto-resume if it stops.
+                                Network buffer for stream download (5-120 seconds). Larger values reduce dropouts but increase latency. Recommended: 30+ seconds for best quality.
+                            </small>
+                        </div>
+                        <div class="form-group">
+                            <label>Playback Cache (seconds)</label>
+                            <input type="number" id="decoder-playback-cache" name="decoder-playback-cache" value="10" min="0" max="30" step="0.5" required>
+                            <small style="color: #6b7280; display: block; margin-top: 5px;">
+                                Pre-buffer before playback starts (0-30 seconds). Improves audio quality and reduces glitches. Higher values = smoother playback but longer startup delay. Recommended: 10+ seconds for best quality.
                             </small>
                         </div>
                         <div class="form-group">
                             <label>Output Device (ALSA)</label>
-                            <select id="output-device" name="output-device"></select>
+                            <select id="output-device" name="output-device" onchange="saveOutputDevice()"></select>
                             <button type="button" class="refresh-btn" onclick="loadAudioDevices()">Refresh Devices</button>
                             <small style="color: #6b7280; display: block; margin-top: 5px;">
-                                USB devices are preferred by default. Use Refresh Devices to update list.
+                                USB devices are preferred by default. Use Refresh Devices to update list. Device is automatically saved and restored on refresh.
                             </small>
                         </div>
                         <div class="button-group">
@@ -571,8 +578,8 @@
             const loginPanel = document.getElementById('login-panel');
             const logoutPanel = document.getElementById('logout-panel');
             
-            // Get all controls that should be disabled
-            const allInputs = document.querySelectorAll('input, select, button[id], button[onclick]');
+            // Get all controls that should be disabled (with null checks)
+            const allInputs = Array.from(document.querySelectorAll('input, select, button[id], button[onclick]')).filter(el => el !== null);
             const controlButtons = [
                 'encoder-start', 'encoder-stop', 'decoder-start', 'decoder-stop',
                 'icecast-start', 'icecast-stop', 'save-config', 'refresh-devices'
@@ -584,12 +591,17 @@
                 
                 // Enable all controls
                 allInputs.forEach(el => {
-                    if (el.tagName === 'BUTTON' && controlButtons.includes(el.id)) {
-                        el.disabled = false;
-                    } else if (el.tagName === 'INPUT' || el.tagName === 'SELECT') {
-                        el.disabled = false;
-                        el.style.opacity = '1';
-                        el.style.pointerEvents = 'auto';
+                    if (!el || !el.tagName) return; // Skip null/invalid elements
+                    try {
+                        if (el.tagName === 'BUTTON' && controlButtons.includes(el.id)) {
+                            el.disabled = false;
+                        } else if (el.tagName === 'INPUT' || el.tagName === 'SELECT') {
+                            el.disabled = false;
+                            el.style.opacity = '1';
+                            el.style.pointerEvents = 'auto';
+                        }
+                    } catch (e) {
+                        console.warn('Error enabling control:', e);
                     }
                 });
             } else {
@@ -598,24 +610,38 @@
                 
                 // Disable all controls except login form
                 allInputs.forEach(el => {
-                    const isLoginForm = el.closest('#login-form') || el.id === 'login-username' || el.id === 'login-password' || el.onclick && el.onclick.toString().includes('login');
-                    
-                    if (!isLoginForm) {
-                        if (el.tagName === 'BUTTON' && controlButtons.includes(el.id)) {
-                            el.disabled = true;
-                        } else if (el.tagName === 'INPUT' || el.tagName === 'SELECT') {
-                            el.disabled = true;
-                            el.style.opacity = '0.5';
-                            el.style.pointerEvents = 'none';
+                    if (!el || !el.tagName) return; // Skip null/invalid elements
+                    try {
+                        const isLoginForm = el.closest('#login-form') || el.id === 'login-username' || el.id === 'login-password' || (el.onclick && el.onclick.toString().includes('login'));
+                        
+                        if (!isLoginForm) {
+                            if (el.tagName === 'BUTTON' && controlButtons.includes(el.id)) {
+                                el.disabled = true;
+                            } else if (el.tagName === 'INPUT' || el.tagName === 'SELECT') {
+                                el.disabled = true;
+                                el.style.opacity = '0.5';
+                                el.style.pointerEvents = 'none';
+                            }
                         }
+                    } catch (e) {
+                        console.warn('Error disabling control:', e);
                     }
                 });
             }
         }
 
         async function login() {
-            const username = document.getElementById('login-username').value;
-            const password = document.getElementById('login-password').value;
+            const usernameEl = document.getElementById('login-username');
+            const passwordEl = document.getElementById('login-password');
+            
+            if (!usernameEl || !passwordEl) {
+                console.error('Login form elements not found');
+                alert('Login form not available. Please refresh the page.');
+                return;
+            }
+            
+            const username = usernameEl.value;
+            const password = passwordEl.value;
             
             if (!username || !password) {
                 alert('Please enter username and password');
@@ -633,8 +659,10 @@
                 if (result.success) {
                     isLoggedIn = true;
                     updateLoginUI();
-                    document.getElementById('login-username').value = '';
-                    document.getElementById('login-password').value = '';
+                    const usernameEl = document.getElementById('login-username');
+                    const passwordEl = document.getElementById('login-password');
+                    if (usernameEl) usernameEl.value = '';
+                    if (passwordEl) passwordEl.value = '';
                     alert('Login successful!');
                 } else {
                     alert('Login failed: ' + result.message);
@@ -803,9 +831,8 @@
             }
         }
 
-        // Simple audio meter update function
-
-
+        
+        
         async function startEncoder() {
             if (!isLoggedIn) {
                 showMessage('encoder-message', 'Please login first', 'error');
@@ -863,7 +890,8 @@
             
             const streamUrl = document.getElementById('stream-url').value;
             const outputDevice = (document.getElementById('output-device').value || '').trim();
-            const bufferSecs = parseInt(document.getElementById('decoder-buffer-secs').value) || 5;
+            const bufferSecs = parseInt(document.getElementById('decoder-buffer-secs').value) || 15;
+            const playbackCacheSecs = parseFloat(document.getElementById('decoder-playback-cache').value) || 5;
             if (!streamUrl) {
                 showMessage('decoder-message', 'Please enter a stream URL', 'error');
                 return;
@@ -875,23 +903,29 @@
                     localStorage.setItem('decoder_stream_url', streamUrl);
                 } catch (e) {}
                 
-                // Save decoder config to server FIRST (persist URL/output device/buffer) - always save
+                // Save decoder config to server FIRST (persist URL/output device/buffer/cache) - always save
                 await fetch('/api/decoder/config', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({url: streamUrl, outputDevice: outputDevice || 'default', bufferSecs: bufferSecs})
+                    body: JSON.stringify({url: streamUrl, outputDevice: outputDevice || 'default', bufferSecs: bufferSecs, playbackCacheSecs: playbackCacheSecs})
                 }).catch(() => {});
 
                 const response = await fetch('/api/decoder/start', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({url: streamUrl, outputDevice: outputDevice || 'default'})
+                    body: JSON.stringify({
+                        url: streamUrl, 
+                        outputDevice: outputDevice || 'default',
+                        bufferSecs: bufferSecs,
+                        playbackCacheSecs: playbackCacheSecs
+                    })
                 });
                 const result = await response.json();
                 
                 if (result.success) {
                     showMessage('decoder-message', result.message, 'success');
                     updateStatus();
+                    // Start meter updates when decoder starts
                 } else {
                     showMessage('decoder-message', result.message, 'error');
                 }
@@ -911,6 +945,7 @@
                 if (result.success) {
                     showMessage('decoder-message', result.message, 'success');
                     updateStatus();
+                    // Stop meter updates when decoder stops
                 } else {
                     showMessage('decoder-message', result.message, 'error');
                 }
@@ -990,10 +1025,28 @@
                     opt.textContent = dev.label;
                     outputSelect.appendChild(opt);
                 }
-                // Default for output
-                const outDefault = defs.output || 'default';
-                const outOpt = Array.from(outputSelect.options).find(o => o.value === outDefault);
-                outputSelect.value = outOpt ? outDefault : 'default';
+                // Try to restore saved output device (from server or localStorage)
+                let savedDevice = null;
+                try {
+                    // First try localStorage (fast, works even if not logged in)
+                    savedDevice = localStorage.getItem('decoder_output_device');
+                } catch (e) {}
+                
+                // If no saved device in localStorage, use default
+                if (!savedDevice) {
+                    savedDevice = defs.output || 'default';
+                }
+                
+                // Try to find and set the saved device
+                const savedOpt = Array.from(outputSelect.options).find(o => o.value === savedDevice);
+                if (savedOpt) {
+                    outputSelect.value = savedDevice;
+                } else {
+                    // Fallback to default if saved device not found
+                    const outDefault = defs.output || 'default';
+                    const outOpt = Array.from(outputSelect.options).find(o => o.value === outDefault);
+                    outputSelect.value = outOpt ? outDefault : 'default';
+                }
 
                 // Show human-readable list
                 const devicesDiv = document.getElementById('audio-devices');
@@ -1024,6 +1077,7 @@
                 const url = cfg.url || '';
                 const outDev = cfg.outputDevice || '';
                 const bufferSecs = cfg.bufferSecs || 5;
+                const playbackCacheSecs = cfg.playbackCacheSecs || 3;
                 
                 // Always restore saved URL from server if available
                 if (url && urlField) {
@@ -1034,19 +1088,38 @@
                     } catch (e) {}
                 }
                 
+                // Restore output device
                 if (outDev) {
                     const outSel = document.getElementById('output-device');
                     if (outSel) {
+                        // First try to find exact match
                         const match = Array.from(outSel.options).find(o => o.value === outDev);
                         if (match) {
                             outSel.value = outDev;
+                        } else {
+                            // If no match yet (devices not loaded), save to localStorage and set when devices load
+                            try {
+                                localStorage.setItem('decoder_output_device', outDev);
+                            } catch (e) {}
+                            // Try to set it anyway (might work if it's a valid device string)
+                            outSel.value = outDev;
                         }
+                        // Also save to localStorage as backup
+                        try {
+                            localStorage.setItem('decoder_output_device', outDev);
+                        } catch (e) {}
                     }
                 }
                 
                 // Set buffer size if available
                 if (bufferField) {
                     bufferField.value = bufferSecs;
+                }
+                
+                // Set playback cache if available
+                const playbackCacheField = document.getElementById('decoder-playback-cache');
+                if (playbackCacheField) {
+                    playbackCacheField.value = playbackCacheSecs;
                 }
             } catch (e) {
                 // If server load fails, try localStorage
@@ -1063,6 +1136,21 @@
                     }
                 } catch (e) {
                     console.error('Failed to load URL from localStorage:', e);
+                }
+            }
+            
+            // Fallback: Load output device from localStorage if not set
+            const outSel = document.getElementById('output-device');
+            if (outSel && !outSel.value) {
+                try {
+                    const savedDevice = localStorage.getItem('decoder_output_device');
+                    if (savedDevice) {
+                        // Try to set it - might work even if not in dropdown yet
+                        outSel.value = savedDevice;
+                        console.log('Loaded output device from localStorage:', savedDevice);
+                    }
+                } catch (e) {
+                    console.error('Failed to load output device from localStorage:', e);
                 }
             }
         }
@@ -1095,10 +1183,11 @@
             // Debounce: save to server 1 second after user stops typing
             urlSaveTimeout = setTimeout(async () => {
                 try {
+                    const outputDevice = (document.getElementById('output-device').value || '').trim();
                     const response = await fetch('/api/decoder/config', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({url: url})
+                        body: JSON.stringify({url: url, outputDevice: outputDevice || 'default'})
                     });
                     const result = await response.json();
                     if (result.success) {
@@ -1110,6 +1199,46 @@
                     console.error('Failed to auto-save URL:', e);
                 }
             }, 1000);
+        }
+        
+        // Auto-save output device when user changes it
+        let deviceSaveTimeout = null;
+        async function saveOutputDevice() {
+            const deviceField = document.getElementById('output-device');
+            if (!deviceField) return;
+            
+            const device = deviceField.value.trim();
+            
+            // Always save to localStorage immediately (works even when not logged in)
+            if (device) {
+                try {
+                    localStorage.setItem('decoder_output_device', device);
+                } catch (e) {
+                    console.error('Failed to save output device to localStorage:', e);
+                }
+            }
+            
+            // If logged in, also save to server
+            if (!isLoggedIn || !device) return;
+            
+            // Clear existing timeout
+            if (deviceSaveTimeout) {
+                clearTimeout(deviceSaveTimeout);
+            }
+            
+            // Debounce: save to server 500ms after user changes device
+            deviceSaveTimeout = setTimeout(async () => {
+                try {
+                    const url = (document.getElementById('stream-url').value || '').trim();
+                    const response = await fetch('/api/decoder/config', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({url: url, outputDevice: device || 'default'})
+                    }).catch(() => {});
+                } catch (error) {
+                    console.error('Error saving output device:', error);
+                }
+            }, 500);
         }
 
 
@@ -1225,6 +1354,7 @@
                 console.error('Error updating stream URL:', error);
             }
         }
+
 
         function showMessage(elementId, message, type) {
             const element = document.getElementById(elementId);

@@ -61,8 +61,7 @@ decoder_supervisor_thread = None
 decoder_should_run = False
 audio_level_thread = None
 audio_levels = {'left': 0.0, 'right': 0.0}
-decoder_audio_level_thread = None
-decoder_audio_levels = {'left': 0.0, 'right': 0.0}
+# Removed: decoder_audio_level_thread and decoder_audio_levels (meter removed)
 running = True
 
 def get_encoder_status():
@@ -80,31 +79,73 @@ def get_decoder_status():
     if decoder_should_run:
         return True
     try:
+        # First check tracked processes - both must be running for valid status
         if decoder_process and decoder_process.poll() is None:
-            return True
-        if decoder_aplay_process and decoder_aplay_process.poll() is None:
-            return True
+            # If we have aplay_process, it must also be running
+            if decoder_aplay_process:
+                if decoder_aplay_process.poll() is None:
+                    return True
+                else:
+                    # aplay died, decoder not working
+                    return False
+            else:
+                # No aplay process (cvlc mode), just check main process
+                return True
+        
+        # Fallback: check system processes
         pgrep_path = shutil.which('pgrep') or '/usr/bin/pgrep'
-        # Check mpg123/aplay
-        for name in (['-x', 'mpg123'], ['-x', 'aplay']):
-            result = subprocess.run([pgrep_path] + name, capture_output=True, text=True)
-            if result.returncode == 0 and result.stdout.strip():
-                return True
-        # Check cvlc
-        for args in (['-x', 'cvlc'], ['-f', 'cvlc']):
-            result = subprocess.run([pgrep_path] + args, capture_output=True, text=True)
-            if result.returncode == 0 and result.stdout.strip():
-                return True
-        # Check ffmpeg pipeline
-        for args in (['-x', 'ffmpeg'], ['-f', 'ffmpeg']):
-            result = subprocess.run([pgrep_path] + args, capture_output=True, text=True)
-            if result.returncode == 0 and result.stdout.strip():
-                return True
+        
+        # For ffmpeg pipeline: need both ffmpeg AND aplay
+        ffmpeg_result = subprocess.run([pgrep_path, '-x', 'ffmpeg'], capture_output=True, text=True)
+        aplay_result = subprocess.run([pgrep_path, '-x', 'aplay'], capture_output=True, text=True)
+        if ffmpeg_result.returncode == 0 and aplay_result.returncode == 0:
+            # Both running - check they're not zombies
+            ffmpeg_pids = ffmpeg_result.stdout.strip().split()
+            aplay_pids = aplay_result.stdout.strip().split()
+            if ffmpeg_pids and aplay_pids:
+                # Check if processes are actually running (not zombies)
+                ps_result = subprocess.run(['ps', '-p', ','.join(ffmpeg_pids + aplay_pids), '-o', 'stat='], 
+                                          capture_output=True, text=True)
+                if ps_result.returncode == 0:
+                    stats = ps_result.stdout.strip().split()
+                    # If any process is zombie (Z) or dead, return False
+                    if any('Z' in stat or 'D' in stat for stat in stats):
+                        return False
+                    # All processes are running (R, S, etc.)
+                    return True
+        
+        # Check mpg123/aplay pipeline
+        mpg123_result = subprocess.run([pgrep_path, '-x', 'mpg123'], capture_output=True, text=True)
+        if mpg123_result.returncode == 0 and aplay_result.returncode == 0:
+            mpg123_pids = mpg123_result.stdout.strip().split()
+            aplay_pids = aplay_result.stdout.strip().split()
+            if mpg123_pids and aplay_pids:
+                ps_result = subprocess.run(['ps', '-p', ','.join(mpg123_pids + aplay_pids), '-o', 'stat='], 
+                                          capture_output=True, text=True)
+                if ps_result.returncode == 0:
+                    stats = ps_result.stdout.strip().split()
+                    if any('Z' in stat or 'D' in stat for stat in stats):
+                        return False
+                    return True
+        
+        # Check cvlc (standalone, no aplay needed)
+        cvlc_result = subprocess.run([pgrep_path, '-x', 'cvlc'], capture_output=True, text=True)
+        if cvlc_result.returncode == 0:
+            cvlc_pids = cvlc_result.stdout.strip().split()
+            if cvlc_pids:
+                ps_result = subprocess.run(['ps', '-p', ','.join(cvlc_pids), '-o', 'stat='], 
+                                          capture_output=True, text=True)
+                if ps_result.returncode == 0:
+                    stats = ps_result.stdout.strip().split()
+                    if any('Z' in stat or 'D' in stat for stat in stats):
+                        return False
+                    return True
+        
         return False
     except Exception:
         return False
 
-def _start_decoder_process(stream_url: str, output_device: str, volume: int = 75, buffer_secs: int = 5):
+def _start_decoder_process(stream_url: str, output_device: str, volume: int = 100, buffer_secs: int = 5, playback_cache_secs: int = 2):
     """Start decoder process (mpg123 or cvlc) with volume control"""
     global decoder_current_volume
     decoder_current_volume = volume
@@ -147,8 +188,12 @@ def _start_decoder_process(stream_url: str, output_device: str, volume: int = 75
                     stdin=mpg123_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE
                 )
                 mpg123_proc.stdout.close()
+                # ALSA buffer configuration for smooth playback
+                period_frames = 1024
+                buffer_frames = period_frames * 4
                 aplay_proc = subprocess.Popen(
-                    [aplay_path, '-D', output_device, '-f', 'cd', '-c', '2', '-r', '44100'],
+                    [aplay_path, '-D', output_device, '-f', 'cd', '-c', '2', '-r', '44100',
+                     '-B', str(buffer_frames), '-F', str(period_frames)],
                     stdin=sox_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE
                 )
                 sox_proc.stdout.close()
@@ -156,8 +201,12 @@ def _start_decoder_process(stream_url: str, output_device: str, volume: int = 75
                 decoder_aplay_process = aplay_proc
             else:
                 # Direct pipe without volume control (or volume is 100%)
+                # ALSA buffer configuration for smooth playback
+                period_frames = 1024
+                buffer_frames = period_frames * 4
                 aplay_proc = subprocess.Popen(
-                    [aplay_path, '-D', output_device, '-f', 'cd', '-c', '2', '-r', '44100'],
+                    [aplay_path, '-D', output_device, '-f', 'cd', '-c', '2', '-r', '44100',
+                     '-B', str(buffer_frames), '-F', str(period_frames)],
                     stdin=mpg123_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE
                 )
                 mpg123_proc.stdout.close()
@@ -181,35 +230,8 @@ def _start_decoder_process(stream_url: str, output_device: str, volume: int = 75
             print(f"mpg123 start exception: {e}")
             pass
 
-    # Fallback to VLC for AAC/M3U/etc. Enhanced buffering for smooth playback
-    try:
-        cvlc_path = shutil.which('cvlc') or '/usr/bin/cvlc'
-        # VLC volume is 0-256, so convert 0-100 to 0-256
-        vlc_volume = int(volume * 2.56)
-        # Convert buffer seconds to milliseconds for VLC
-        vlc_cache_ms = buffer_secs * 1000
-        vlc_cache_ms = max(1000, min(60000, vlc_cache_ms))  # Clamp between 1s and 60s
-        # User-configurable network caching (prevents audio cuts)
-        cvlc_proc = subprocess.Popen(
-            [cvlc_path, '--intf', 'dummy', '--no-video', '--quiet',
-             '--aout', 'alsa', f'--alsa-audio-device={output_device}',
-             '--volume', str(vlc_volume),
-             f'--network-caching={vlc_cache_ms}', f'--file-caching={vlc_cache_ms}',
-             f'--live-caching={vlc_cache_ms}',  # Live stream caching
-             '--network-timeout=10000',  # 10 second network timeout
-             stream_url],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL
-        )
-        time.sleep(0.8)
-        if cvlc_proc.poll() is None:
-            decoder_process = cvlc_proc
-            decoder_aplay_process = None
-            return True
-        try:
-            cvlc_proc.terminate()
-        except: pass
-    except Exception:
-        pass
+    # VLC is now handled by dedicated _start_vlc_player() function
+    # This fallback is no longer needed - use the optimized VLC function instead
     return False
 
 def _decoder_supervisor_loop():
@@ -225,18 +247,28 @@ def _decoder_supervisor_loop():
             dec = st.get('decoder', {})
             url = dec.get('url', '')
             out_dev = dec.get('outputDevice', '') or _detect_default_devices().get('output', 'default')
-            volume = dec.get('volume', 75)
+            volume = 100  # Always maximum volume
             
             if not url:
                 time.sleep(1.0)
                 continue
             
-            # Check if decoder process is still running
+            # Check if decoder process is still running - BOTH must be running for pipeline
             process_running = False
             if decoder_process and decoder_process.poll() is None:
-                process_running = True
-            if decoder_aplay_process and decoder_aplay_process.poll() is None:
-                process_running = True
+                # If we have aplay_process, both must be running
+                if decoder_aplay_process:
+                    if decoder_aplay_process.poll() is None:
+                        process_running = True
+                    else:
+                        # aplay died, need restart
+                        process_running = False
+                else:
+                    # No aplay (cvlc mode), just check main process
+                    process_running = True
+            else:
+                # Main process died, need restart
+                process_running = False
             
             # If process not running, restart it (handles network failures, crashes, etc.)
             if not process_running:
@@ -251,13 +283,17 @@ def _decoder_supervisor_loop():
                 
                 # Try to start decoder
                 success = False
-                # Get buffer size from config
-                buffer_secs = int(dec.get('bufferSecs', 5))
+                # Get buffer size and playback cache from config
+                buffer_secs = int(dec.get('bufferSecs', 10))  # Increased default for better quality
                 buffer_secs = max(1, min(60, buffer_secs))  # Clamp between 1 and 60
-                # Try ffmpeg first (has better buffering and reconnection)
-                if _start_ffmpeg_pipeline(url, out_dev, volume, buffer_secs):
+                playback_cache_secs = int(dec.get('playbackCacheSecs', 3))  # Increased default cache
+                playback_cache_secs = max(0, min(10, playback_cache_secs))  # Clamp between 0 and 10
+                # Try VLC first (best buffering and quality)
+                if _start_vlc_player(url, out_dev, volume, buffer_secs, playback_cache_secs):
                     success = True
-                elif _start_decoder_process(url, out_dev, volume, buffer_secs):
+                elif _start_ffmpeg_pipeline(url, out_dev, volume, buffer_secs, playback_cache_secs):
+                    success = True
+                elif _start_decoder_process(url, out_dev, volume, buffer_secs, playback_cache_secs):
                     success = True
                 
                 if success:
@@ -280,13 +316,129 @@ def _decoder_supervisor_loop():
             backoff = min(backoff * 1.5, max_backoff)
             time.sleep(backoff)
 
-def _start_ffmpeg_pipeline(stream_url: str, output_device: str, volume: int = 75, buffer_secs: int = 5) -> bool:
+def _start_vlc_player(stream_url: str, output_device: str, volume: int = 100, buffer_secs: int = 30, playback_cache_secs: int = 10) -> bool:
+    """
+    Start VLC (cvlc) player with excellent buffering and quality.
+    VLC has the best network handling and buffer management.
+    """
+    global decoder_process, decoder_aplay_process, decoder_current_volume
+    cvlc_path = shutil.which('cvlc') or '/usr/bin/cvlc'
+    if not os.path.exists(cvlc_path):
+        return False
+    
+    decoder_current_volume = volume
+    
+    try:
+        # Set ALSA volume to maximum
+        try:
+            st = load_status()
+            output_dev = output_device
+            card_num = None
+            if output_dev.startswith('hw:') or output_dev.startswith('plughw:'):
+                try:
+                    parts = output_dev.replace('plughw:', 'hw:').split(':')[1].split(',')
+                    card_num = parts[0]
+                except:
+                    pass
+            amixer_path = shutil.which('amixer') or '/usr/bin/amixer'
+            volume_controls = ['Master', 'PCM', 'Speaker', 'Speaker Playback Volume', 'Headphone', 'Playback']
+            if card_num:
+                for vol_control in volume_controls:
+                    result = subprocess.run([amixer_path, '-c', card_num, 'sset', vol_control, '100%'], 
+                                          check=False, timeout=2, capture_output=True)
+                    if result.returncode == 0:
+                        subprocess.run([amixer_path, '-c', card_num, 'sset', vol_control, 'unmute'], 
+                                     check=False, timeout=2, capture_output=True)
+                        break
+        except:
+            pass
+        
+        # VLC volume is 0-256, so convert 0-100 to 0-256
+        vlc_volume = int(volume * 2.56)
+        
+        # Calculate cache times: buffer_secs for network, playback_cache_secs for pre-buffering
+        # VLC uses milliseconds for caching
+        # Use much larger buffers for better quality
+        network_cache_ms = int(buffer_secs * 1000)
+        network_cache_ms = max(5000, min(120000, network_cache_ms))  # Clamp between 5s and 120s (increased from 1-60s)
+        
+        # Pre-buffer before starting playback - use much larger cache
+        live_cache_ms = int((buffer_secs + playback_cache_secs) * 1000)
+        live_cache_ms = max(10000, min(120000, live_cache_ms))  # Clamp between 10s and 120s (increased from 2-60s)
+        
+        # Additional buffering for network streams
+        file_cache_ms = network_cache_ms * 2  # File cache should be larger than network cache
+        
+        # VLC command with optimized settings for best quality and buffering
+        vlc_cmd = [
+            cvlc_path,
+            '--intf', 'dummy',
+            '--no-video',
+            '--quiet',
+            '--aout', 'alsa',
+            f'--alsa-audio-device={output_device}',
+            '--volume', str(vlc_volume),
+            # Network buffering (critical for smooth playback) - AGGRESSIVE CACHING
+            f'--network-caching={network_cache_ms}',
+            f'--file-caching={file_cache_ms}',  # Larger file cache
+            f'--live-caching={live_cache_ms}',  # Pre-buffer before starting
+            '--http-continuous',  # Continuous HTTP streaming
+            '--http-forward-cookies',  # Forward cookies for authentication
+            '--http-reconnect-delay', '2',  # Fast reconnect on failure
+            # Audio quality optimizations
+            '--audio-resampler', 'src',  # High-quality resampling
+            '--audio-filter', 'normvol',  # Normalize volume
+            '--norm-max-level', '1.0',  # Maximum normalization
+            # Network optimizations
+            '--network-timeout', '10000',  # 10 second timeout
+            '--http-reconnect',  # Auto-reconnect on HTTP streams
+            # Disable unnecessary features for better performance
+            '--no-sout-rtp-sap',
+            '--no-sout-standard-sap',
+            '--ttl=1',
+            stream_url
+        ]
+        
+        cvlc_proc = subprocess.Popen(
+            vlc_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL
+        )
+        
+        # Give VLC time to start and buffer (longer for network streams with large cache)
+        # Wait longer to allow buffering to complete
+        buffer_wait_time = max(5.0, (live_cache_ms / 1000.0) * 0.5)  # Wait at least 50% of cache time
+        time.sleep(buffer_wait_time)
+        
+        if cvlc_proc.poll() is None:
+            decoder_process = cvlc_proc
+            decoder_aplay_process = None
+            
+            # Start audio level monitoring for VLC
+            # Use arecord to capture from the output device (if it supports loopback)
+            
+            return True
+        else:
+            # VLC failed to start
+            try:
+                stderr_output = cvlc_proc.stderr.read().decode() if cvlc_proc.stderr else 'unknown error'
+                print(f"VLC failed to start: {stderr_output[:200]}")
+                cvlc_proc.terminate()
+            except:
+                pass
+            return False
+    except Exception as e:
+        print(f"VLC start exception: {e}")
+        return False
+
+def _start_ffmpeg_pipeline(stream_url: str, output_device: str, volume: int = 100, buffer_secs: int = 5, playback_cache_secs: int = 2) -> bool:
     """
     Start ffmpeg to decode any stream to raw PCM and feed aplay.
     While piping, compute decoder levels from the PCM stream.
     Note: Volume is controlled via ALSA in real-time, not in ffmpeg filter.
     """
-    global decoder_process, decoder_aplay_process, decoder_audio_levels, decoder_current_volume
+    global decoder_process, decoder_aplay_process, decoder_current_volume
     ffmpeg_path = shutil.which('ffmpeg') or '/usr/bin/ffmpeg'
     aplay_path = shutil.which('aplay') or '/usr/bin/aplay'
     if not os.path.exists(ffmpeg_path):
@@ -307,16 +459,28 @@ def _start_ffmpeg_pipeline(stream_url: str, output_device: str, volume: int = 75
             except:
                 pass
         amixer_path = shutil.which('amixer') or '/usr/bin/amixer'
+        # Try different volume control names (USB devices vary)
+        volume_controls = ['Master', 'PCM', 'Speaker', 'Speaker Playback Volume', 'Headphone', 'Playback']
         if card_num:
-            subprocess.run([amixer_path, '-c', card_num, 'sset', 'Master', f'{volume}%'], 
-                          check=False, timeout=2, capture_output=True)
-            subprocess.run([amixer_path, '-c', card_num, 'sset', 'PCM', f'{volume}%'], 
-                          check=False, timeout=2, capture_output=True)
+            for vol_control in volume_controls:
+                # Set volume to 100%
+                result = subprocess.run([amixer_path, '-c', card_num, 'sset', vol_control, '100%'], 
+                                      check=False, timeout=2, capture_output=True)
+                if result.returncode == 0:
+                    # Also unmute the control
+                    subprocess.run([amixer_path, '-c', card_num, 'sset', vol_control, 'unmute'], 
+                                 check=False, timeout=2, capture_output=True)
+                    break  # Success, found working control
         else:
-            subprocess.run([amixer_path, 'sset', 'Master', f'{volume}%'], 
-                          check=False, timeout=2, capture_output=True)
-            subprocess.run([amixer_path, 'sset', 'PCM', f'{volume}%'], 
-                          check=False, timeout=2, capture_output=True)
+            for vol_control in volume_controls:
+                # Set volume to 100%
+                result = subprocess.run([amixer_path, 'sset', vol_control, '100%'], 
+                                      check=False, timeout=2, capture_output=True)
+                if result.returncode == 0:
+                    # Also unmute the control
+                    subprocess.run([amixer_path, 'sset', vol_control, 'unmute'], 
+                                 check=False, timeout=2, capture_output=True)
+                    break  # Success, found working control
     except:
         pass
     
@@ -350,8 +514,22 @@ def _start_ffmpeg_pipeline(stream_url: str, output_device: str, volume: int = 75
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL
         )
+        # Calculate ALSA buffer and period sizes for smooth playback
+        # Period size: smaller = lower latency but more CPU, larger = smoother but more latency
+        # Buffer size: should be multiple of period size, larger = more stable
+        # For 44.1kHz: 1 period = ~23ms, 4 periods = ~92ms buffer
+        # Use buffer_secs to calculate appropriate buffer size for smooth playback
+        period_frames = 1024  # ~23ms at 44.1kHz (good balance)
+        # Buffer should be at least buffer_secs worth of audio, but minimum 4 periods
+        min_buffer_frames = int(buffer_secs * 44100)  # Convert seconds to frames at 44.1kHz
+        buffer_frames = max(period_frames * 4, min_buffer_frames)  # At least 4 periods, or buffer_secs worth
+        buffer_frames = min(buffer_frames, 131072)  # Max reasonable buffer (about 3 seconds at 44.1kHz)
+        
         aplay_proc = subprocess.Popen(
-            [aplay_path, '-D', output_device, '-f', 'cd', '-c', '2', '-r', '44100'],
+            [aplay_path, '-D', output_device, 
+             '-f', 'cd', '-c', '2', '-r', '44100',
+             '-B', str(buffer_frames),  # Buffer size in frames
+             '-F', str(period_frames)],  # Period size in frames
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
@@ -361,25 +539,59 @@ def _start_ffmpeg_pipeline(stream_url: str, output_device: str, volume: int = 75
 
         def _pump_and_meter():
             # Volume is controlled via ALSA in real-time, no need to scale here
-            chunk_size = 4096
+            # Use larger chunk size for better throughput and smoother playback
+            chunk_size = 16384  # Increased for better throughput and fewer dropouts
+            playback_cache_bytes = playback_cache_secs * 44100 * 2 * 2  # Pre-buffer before playback
+            cache_buffer = bytearray()
+            cache_filled = False
+            
             try:
+                # Pre-fill cache buffer before starting playback (improves quality)
+                # Add timeout to prevent infinite blocking
+                if playback_cache_bytes > 0:
+                    cache_timeout = time.time() + 10.0  # 10 second timeout for pre-buffering
+                    while len(cache_buffer) < playback_cache_bytes and decoder_should_run and time.time() < cache_timeout:
+                        data = ffmpeg_proc.stdout.read(min(chunk_size, playback_cache_bytes - len(cache_buffer))) if ffmpeg_proc.stdout else b''
+                        if not data:
+                            # Check if ffmpeg died
+                            if ffmpeg_proc.poll() is not None:
+                                break
+                            time.sleep(0.01)
+                            continue
+                        cache_buffer.extend(data)
+                    cache_filled = True
+                    # If we didn't fill cache but have some data, start anyway
+                    if len(cache_buffer) > 0:
+                        cache_filled = True
+                
+                # Now start pumping data with cache support
                 while decoder_should_run and ffmpeg_proc and ffmpeg_proc.poll() is None and aplay_proc and aplay_proc.poll() is None:
-                    data = ffmpeg_proc.stdout.read(chunk_size) if ffmpeg_proc.stdout else b''
+                    # Read from cache first if available, then from stream
+                    if cache_buffer:
+                        data = bytes(cache_buffer[:chunk_size])
+                        cache_buffer = cache_buffer[chunk_size:]
+                    else:
+                        data = ffmpeg_proc.stdout.read(chunk_size) if ffmpeg_proc.stdout else b''
+                    
                     if not data:
-                        time.sleep(0.02)
+                        # Reduced sleep for faster recovery from network hiccups
+                        time.sleep(0.005)
                         continue
+                    
                     # Volume is controlled via ALSA in real-time, no need to scale here
-                    # Write to aplay with error handling
+                    # Write to aplay with error handling and larger writes for better throughput
                     try:
                         if aplay_proc.stdin:
                             aplay_proc.stdin.write(data)
                             aplay_proc.stdin.flush()
+                            # Small delay to prevent overwhelming the audio system
+                            time.sleep(0.001)
                     except BrokenPipeError:
                         # aplay closed, break and let supervisor restart
                         break
                     except Exception:
-                        # Other errors, continue trying
-                        time.sleep(0.01)
+                        # Other errors, continue trying with minimal delay
+                        time.sleep(0.005)
                         continue
                     # Measure levels (use original data before volume scaling for accurate metering)
                     try:
@@ -389,8 +601,7 @@ def _start_ffmpeg_pipeline(stream_url: str, output_device: str, volume: int = 75
                             right = samples[1::2]
                             left_rms = (sum(x*x for x in left) / max(1, len(left))) ** 0.5
                             right_rms = (sum(x*x for x in right) / max(1, len(right))) ** 0.5
-                            decoder_audio_levels['left'] = min(left_rms / 32768.0, 1.0)
-                            decoder_audio_levels['right'] = min(right_rms / 32768.0, 1.0)
+                            # Removed: decoder_audio_levels update (meter removed)
                     except Exception:
                         pass
             finally:
@@ -576,55 +787,7 @@ def restart_audio_meter(device: str, sample_rate: int):
     except Exception:
         pass
 
-def read_decoder_audio_levels(playback_device='plughw:2,0', sample_rate=44100):
-    """Read audio levels intended for decoder output by sampling the same card capture device."""
-    global decoder_audio_levels
-    arecord_path = shutil.which('arecord') or '/usr/bin/arecord'
-    # Map playback plughw:X,0 or hw:X,0 to capture hw:X,0
-    capture_dev = playback_device.replace('plughw:', 'hw:').replace('default', 'hw:0,0')
-    if not capture_dev.startswith('hw:'):
-        capture_dev = 'hw:0,0'
-    while decoder_should_run:
-        try:
-            cmd = [arecord_path, '-f', 'S16_LE', '-r', str(sample_rate),
-                   '-c', '2', '-D', capture_dev, '-t', 'raw', '-d', '0.1', '-q']
-            process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=0.8)
-            data = process.stdout
-            if len(data) < 4:
-                time.sleep(0.15)
-                continue
-            try:
-                samples = array.array('h', data)
-                if len(samples) < 2:
-                    time.sleep(0.1)
-                    continue
-                left_samples = [abs(samples[i]) for i in range(0, len(samples), 2)]
-                right_samples = [abs(samples[i+1]) for i in range(1, len(samples), 2)]
-                left_rms = (sum(x*x for x in left_samples) / max(1, len(left_samples))) ** 0.5
-                right_rms = (sum(x*x for x in right_samples) / max(1, len(right_samples))) ** 0.5
-                decoder_audio_levels['left'] = min(left_rms / 32768.0, 1.0)
-                decoder_audio_levels['right'] = min(right_rms / 32768.0, 1.0)
-            except Exception:
-                decoder_audio_levels = {'left': 0.0, 'right': 0.0}
-            time.sleep(0.1)
-        except Exception:
-            decoder_audio_levels = {'left': 0.0, 'right': 0.0}
-            time.sleep(0.5)
-
-def start_decoder_meter_thread(output_device: str):
-    """Start decoder audio meter thread based on selected output device."""
-    global decoder_audio_level_thread
-    try:
-        if decoder_audio_level_thread and decoder_audio_level_thread.is_alive():
-            return
-    except Exception:
-        pass
-    decoder_audio_level_thread = threading.Thread(
-        target=read_decoder_audio_levels,
-        args=(output_device, 44100),
-        daemon=True
-    )
-    decoder_audio_level_thread.start()
+# Removed: read_decoder_audio_levels() and start_decoder_meter_thread() functions (meter removed)
 
 def load_config():
     """Load configuration from darkice.conf"""
@@ -637,7 +800,7 @@ def load_config():
         'sampleRate': '44100',
         'device': 'hw:1,0',
         'streamName': 'Momento Stream',
-        'bufferSecs': '5'
+        'bufferSecs': '10'  # Increased default for better quality
     }
     
     if CONFIG_FILE.exists():
@@ -675,7 +838,7 @@ def save_config(config):
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     
     # Get buffer size, default to 5 if not provided
-    buffer_secs = str(config.get('bufferSecs', '5')).strip()
+    buffer_secs = str(config.get('bufferSecs', '10')).strip()  # Increased default for better quality
     if not buffer_secs or not buffer_secs.isdigit():
         buffer_secs = '5'
     # Clamp between 1 and 60 seconds
@@ -825,7 +988,7 @@ def api_status():
         'decoder': get_decoder_status(),
         'icecast': get_icecast_status(),
         'config': load_config(),
-        'audioLevels': audio_levels
+        'audioLevels': audio_levels,
     })
 
 @app.route('/api/config', methods=['GET'])
@@ -923,6 +1086,12 @@ def api_decoder_start():
     """Start decoder/player"""
     global decoder_process, decoder_aplay_process, decoder_should_run
     
+    # CRITICAL: Initialize volume and buffer settings FIRST, before any other code
+    # Volume is always set to maximum (100%) - no user control
+    volume = 100
+    buffer_secs = 30  # Much larger default buffer for better quality (reduces dropouts significantly)
+    playback_cache_secs = 10  # Much larger default cache for smoother playback
+    
     # If decoder is running, stop it first (allows restart with new settings)
     if get_decoder_status():
         # Stop existing decoder
@@ -936,10 +1105,8 @@ def api_decoder_start():
                 decoder_aplay_process = None
             # Kill any remaining processes
             pkill_path = shutil.which('pkill') or '/usr/bin/pkill'
-            subprocess.run([pkill_path, '-x', 'mpg123'], check=False, timeout=2)
-            subprocess.run([pkill_path, '-x', 'aplay'], check=False, timeout=2)
+            # Only kill VLC - we only use VLC now
             subprocess.run([pkill_path, '-x', 'cvlc'], check=False, timeout=2)
-            subprocess.run([pkill_path, '-x', 'ffmpeg'], check=False, timeout=2)
             time.sleep(1)
         except Exception:
             pass
@@ -947,6 +1114,9 @@ def api_decoder_start():
     data = request.json
     stream_url = data.get('url', '')
     output_device = str(data.get('outputDevice', '') or '').strip()
+    # Get buffer settings from request if provided
+    request_buffer_secs = data.get('bufferSecs')
+    request_playback_cache_secs = data.get('playbackCacheSecs')
     
     # Normalize URL: prepend http:// if scheme is missing (e.g., 46.20.4.2:8010/;stream)
     def normalize_url(u: str) -> str:
@@ -957,7 +1127,32 @@ def api_decoder_start():
         if not re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*://', u):
             return f'http://{u}'
         return u
-
+    
+    def parse_m3u_playlist(url: str) -> str:
+        """Parse M3U playlist and return actual stream URL."""
+        try:
+            import urllib.request
+            response = urllib.request.urlopen(url, timeout=5)
+            content = response.read().decode('utf-8', errors='ignore')
+            # M3U format: lines starting with # are metadata, others are URLs
+            for line in content.split('\n'):
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    # Found the stream URL
+                    if line.startswith('http://') or line.startswith('https://'):
+                        return line
+                    # Relative URL - construct from base
+                    if url.startswith('http'):
+                        base_url = '/'.join(url.split('/')[:-1])
+                        return f'{base_url}/{line}'
+        except Exception:
+            pass
+        return url  # Return original if parsing fails
+    
+    # Check if URL is M3U playlist and parse it
+    if stream_url.lower().endswith('.m3u') or '.m3u8' in stream_url.lower():
+        stream_url = parse_m3u_playlist(stream_url)
+    
     stream_url = normalize_url(stream_url)
 
     if not stream_url:
@@ -967,6 +1162,29 @@ def api_decoder_start():
     decoder_process = None
     decoder_aplay_process = None
     last_error = None
+    
+    # Try to load buffer settings from saved config (volume is always 100%)
+    try:
+        st = load_status()
+        dec_config = st.get('decoder', {})
+        # Volume is always 100% (maximum) - no user control
+        volume = 100
+        # Use request value if provided, otherwise use saved config, otherwise use default
+        if request_buffer_secs is not None:
+            buffer_secs = int(request_buffer_secs)
+        else:
+            buffer_secs = int(dec_config.get('bufferSecs', buffer_secs))  # Use existing buffer_secs as fallback
+        buffer_secs = max(1, min(60, buffer_secs))  # Clamp between 1 and 60
+        
+        if request_playback_cache_secs is not None:
+            playback_cache_secs = int(request_playback_cache_secs)
+        else:
+            playback_cache_secs = int(dec_config.get('playbackCacheSecs', playback_cache_secs))  # Use existing as fallback
+        playback_cache_secs = max(0, min(10, playback_cache_secs))  # Clamp between 0 and 10
+    except Exception:
+        # Keep defaults already set above - volume always 100%
+        volume = 100
+        pass
 
     # Helper: choose a sensible ALSA output device if not provided
     def choose_output_device_fallback() -> str:
@@ -1015,7 +1233,9 @@ def api_decoder_start():
                 st['decoder']['outputDevice'] = output_device
             # Preserve existing buffer size if not provided
             if 'bufferSecs' not in st['decoder']:
-                st['decoder']['bufferSecs'] = 5
+                st['decoder']['bufferSecs'] = 30  # Much larger default for better quality
+            if 'playbackCacheSecs' not in st['decoder']:
+                st['decoder']['playbackCacheSecs'] = 10  # Much larger default cache
             save_status(st)
         except Exception:
             pass
@@ -1025,7 +1245,7 @@ def api_decoder_start():
             dev_norm = output_device.replace('plughw:', 'hw:') if output_device else ''
             if dev_norm.startswith('hw:') and ',' in dev_norm:
                 restart_audio_meter(dev_norm, 44100)
-                start_decoder_meter_thread(output_device or dev_norm)
+                # Removed: start_decoder_meter_thread() call (meter removed)
         except Exception:
             pass
 
@@ -1036,138 +1256,139 @@ def api_decoder_start():
         # Resolve output device
         if not output_device:
             output_device = choose_output_device_fallback()
-
-        # Get volume from config
-        st = load_status()
-        dec_config = st.get('decoder', {})
-        volume = dec_config.get('volume', 75)
-        buffer_secs = int(dec_config.get('bufferSecs', 5))  # Default 5 seconds
-        buffer_secs = max(1, min(60, buffer_secs))  # Clamp between 1 and 60
         
-        # Try ffmpeg PCM pipeline first (works for MP3/AAC/M3U) and gives decoder levels
+        # Use VLC ONLY - it handles all formats (MP3, AAC, OGG, FLAC, etc.) and has best buffering
+        # VLC buffers are stored in RAM for fast access
         if decoder_process is None:
-            if _start_ffmpeg_pipeline(stream_url, output_device, volume, buffer_secs):
-                # Started successfully with ffmpeg; skip mpg123 path
+            if _start_vlc_player(stream_url, output_device, volume, buffer_secs, playback_cache_secs):
+                # Started successfully with VLC
                 time.sleep(0.5)
             else:
                 decoder_process = None
+                # VLC not available - return error
+                return jsonify({
+                    'success': False, 
+                    'message': 'VLC (cvlc) is required but not found. Please install: sudo apt-get install vlc'
+                }), 500
 
-        # If ffmpeg not started, try mpg123 with stdout (-s) and pipe to aplay
-        if decoder_process is None:
-            # This bypasses the problematic ALSA/JACK output drivers
+        # VLC handles everything - no need for fallbacks
+        # If VLC failed, we already returned an error above
+        # If we get here, VLC started successfully
+            
+            # Use mpg123 with direct ALSA output (more reliable than piping)
             env = os.environ.copy()
             # Disable JACK completely
             env.pop('JACK_PROMISCUOUS_SERVER', None)
             env.pop('JACK_DEFAULT_SERVER', None)
-            # Set output to dummy to prevent any driver loading attempts
-            env['MPG123_MODDIR'] = '/usr/lib/aarch64-linux-gnu/mpg123'  # Help mpg123 find modules if needed
+            env['MPG123_MODDIR'] = '/usr/lib/aarch64-linux-gnu/mpg123'
             
             try:
-                # Method 1: Try mpg123 with stdout piped to aplay (most reliable)
-                # Apply volume using sox if available, otherwise apply in Python
-                volume_factor = volume / 100.0 if volume > 0 else 0.0
-                sox_path = shutil.which('sox') or '/usr/bin/sox'
+                # Method 1: Try mpg123 with direct ALSA output (most reliable for USB devices)
+                # For ALSA output, we need to configure ALSA buffer size via environment or use larger internal buffer
+                # Calculate buffer size: buffer_secs * sample_rate * channels * bytes_per_sample
+                # For 44.1kHz stereo 16-bit: buffer_secs * 44100 * 2 * 2 = buffer_secs * 176400 bytes
+                # mpg123's internal buffer for ALSA is controlled by -b parameter, but it only works with -s mode
+                # For direct ALSA, we need to set ALSA buffer via period and buffer size
+                # Convert buffer_secs to ALSA period/buffer frames
+                # For smooth playback: period_frames = 1024, buffer_frames = period_frames * (buffer_secs * 44.1)
+                period_frames = 1024
+                # Buffer should be at least buffer_secs worth of audio
+                buffer_frames = max(period_frames * 4, int(buffer_secs * 44.1) * period_frames)
+                buffer_frames = min(buffer_frames, 65536)  # Max reasonable buffer
                 
-                # mpg123 buffer: convert seconds to bytes (stereo 16-bit PCM)
-                mpg123_buffer_bytes = buffer_secs * 44100 * 2 * 2
-                mpg123_buffer_bytes = max(4096, min(1048576, mpg123_buffer_bytes))  # Clamp between 4KB and 1MB
-                # Note: mpg123 doesn't have built-in reconnection, but supervisor will restart it
-                # User-configurable buffering (reduces audio cuts)
+                # Set ALSA buffer environment variables for better buffering
+                env['ALSA_PCM_NAME'] = output_device
+                # Use larger buffer for better quality (reduce dropouts)
+                mpg123_cmd = [mpg123_path, '-q', '-o', 'alsa', '-a', output_device]
+                
+                # Add buffer size hint (mpg123 will use this for internal buffering)
+                # For direct ALSA, mpg123 uses ALSA's buffer, but we can hint with larger internal buffer
+                # Calculate internal buffer in frames (44100 samples/sec, so buffer_secs * 44100 frames)
+                internal_buffer_frames = int(buffer_secs * 44100)
+                internal_buffer_frames = max(4096, min(262144, internal_buffer_frames))  # Clamp between 4K and 256K frames
+                
+                # Note: mpg123 -o alsa doesn't support -b directly, but we can use ALSA configuration
+                # For now, we'll rely on ALSA's buffer configuration and add reconnection
                 mpg123_proc = subprocess.Popen(
-                    [mpg123_path, '-q', '-s', '-b', str(mpg123_buffer_bytes), stream_url],
+                    mpg123_cmd + [stream_url],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     stdin=subprocess.DEVNULL,
                     env=env
                 )
                 
-                # Use sox for volume control if available and volume is not 100%
-                if os.path.exists(sox_path) and volume_factor < 1.0:
-                    sox_gain_db = 20 * math.log10(volume_factor) if volume_factor > 0 else -96
-                    sox_proc = subprocess.Popen(
-                        [sox_path, '-t', 'raw', '-r', '44100', '-c', '2', '-b', '16', '-e', 'signed-integer', '-',
-                         '-t', 'raw', '-r', '44100', '-c', '2', '-b', '16', '-e', 'signed-integer', '-',
-                         'gain', str(sox_gain_db)],
-                        stdin=mpg123_proc.stdout,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    mpg123_proc.stdout.close()
-                    aplay_proc = subprocess.Popen(
-                        [aplay_path, '-D', output_device, '-f', 'cd', '-c', '2', '-r', '44100'],
-                        stdin=sox_proc.stdout,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    sox_proc.stdout.close()
-                else:
-                    # Direct pipe (volume 100% or sox not available)
-                    aplay_proc = subprocess.Popen(
-                        [aplay_path, '-D', output_device, '-f', 'cd', '-c', '2', '-r', '44100'],
-                        stdin=mpg123_proc.stdout,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    mpg123_proc.stdout.close()  # Allow mpg123 to receive SIGPIPE if aplay dies
-                
-                # Store both processes - we'll track mpg123 as the main process
-                decoder_process = mpg123_proc
-                decoder_aplay_process = aplay_proc
-                
                 time.sleep(1)
                 
-                # Check if both processes are running
-                if mpg123_proc.poll() is None and aplay_proc.poll() is None:
-                    # Both running, success! Don't try fallback
-                    pass
+                # Check if process is running
+                if mpg123_proc.poll() is None:
+                    # Success - mpg123 is running with direct ALSA output
+                    decoder_process = mpg123_proc
+                    decoder_aplay_process = None  # No aplay needed for direct ALSA
                 else:
-                    # One failed, check which one and why
-                    if mpg123_proc.poll() is not None:
-                        stderr_data = mpg123_proc.stderr.read().decode() if mpg123_proc.stderr else ''
-                        # Check if it's a connection error (expected) or driver error (bad)
-                        if 'driver' in stderr_data.lower() or 'out123' in stderr_data.lower():
-                            last_error = f'mpg123 driver error: {stderr_data[:200]}'
-                        else:
-                            # Connection error or other - this is OK, process might start when stream connects
-                            # Give it more time if it's a connection issue
-                            if 'connection' in stderr_data.lower() or 'resolve' in stderr_data.lower():
-                                # Connection error - wait a bit more, process might still be starting
-                                time.sleep(2)
-                                if mpg123_proc.poll() is None:
-                                    # Process recovered, check aplay
-                                    if aplay_proc.poll() is None:
-                                        pass  # Both running now
-                                    else:
-                                        last_error = f'aplay failed: {aplay_proc.stderr.read().decode()[:200] if aplay_proc.stderr else 'unknown'}'
-                                        decoder_process = None
-                                        decoder_aplay_process = None
-                                else:
-                                    last_error = f'mpg123 connection error: {stderr_data[:200]}'
-                                    decoder_process = None
-                                    decoder_aplay_process = None
-                            else:
-                                last_error = f'mpg123 error: {stderr_data[:200]}'
-                                decoder_process = None
-                                decoder_aplay_process = None
-                    else:
-                        # aplay failed
-                        last_error = aplay_proc.stderr.read().decode() if aplay_proc.stderr else 'aplay failed'
+                    # Direct ALSA failed, try fallback with piping
+                    decoder_process = None
+                    last_error = f'mpg123 direct ALSA failed: {mpg123_proc.stderr.read().decode()[:200] if mpg123_proc.stderr else "unknown"}'
+                    
+                    # Fallback: Try piping method (better buffer control)
+                    try:
+                        # Calculate mpg123 buffer: buffer_secs * sample_rate * channels * bytes_per_sample
+                        # For 44.1kHz stereo 16-bit: buffer_secs * 44100 * 2 * 2 = buffer_secs * 176400 bytes
+                        mpg123_buffer_bytes = buffer_secs * 44100 * 2 * 2
+                        mpg123_buffer_bytes = max(4096, min(1048576, mpg123_buffer_bytes))  # Clamp between 4KB and 1MB
+                        
+                        mpg123_proc = subprocess.Popen(
+                            [mpg123_path, '-q', '-s', '-b', str(mpg123_buffer_bytes), stream_url],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            stdin=subprocess.DEVNULL,
+                            env=env
+                        )
+                        
+                        # Calculate ALSA buffer and period sizes based on buffer_secs for smooth playback
+                        period_frames = 1024  # ~23ms at 44.1kHz
+                        # Buffer should be at least buffer_secs worth of audio, but minimum 4 periods
+                        # For 44.1kHz: buffer_secs * 44100 = total frames needed
+                        min_buffer_frames = int(buffer_secs * 44100)  # Convert seconds to frames at 44.1kHz
+                        buffer_frames = max(period_frames * 4, min_buffer_frames)  # At least 4 periods, or buffer_secs worth
+                        buffer_frames = min(buffer_frames, 131072)  # Max reasonable buffer (about 3 seconds at 44.1kHz)
+                        
+                        aplay_proc = subprocess.Popen(
+                            [aplay_path, '-D', output_device, '-f', 'cd', '-c', '2', '-r', '44100',
+                             '-B', str(buffer_frames), '-F', str(period_frames)],
+                            stdin=mpg123_proc.stdout,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE
+                        )
+                        mpg123_proc.stdout.close()
+                        
+                        time.sleep(1)
+                        if mpg123_proc.poll() is None and aplay_proc.poll() is None:
+                            decoder_process = mpg123_proc
+                            decoder_aplay_process = aplay_proc
+                    except Exception as e:
                         decoder_process = None
                         decoder_aplay_process = None
-                    
-                    # Clean up failed processes
+                        last_error = f'Fallback piping also failed: {str(e)}'
+                
+                # If we got here and decoder_process is still None, both methods failed
+                if decoder_process is None:
+                    # Clean up any failed processes
                     try:
-                        if mpg123_proc.poll() is not None:
+                        if 'mpg123_proc' in locals() and mpg123_proc.poll() is not None:
                             mpg123_proc.terminate()
-                        if aplay_proc.poll() is not None:
+                        if 'aplay_proc' in locals() and aplay_proc.poll() is not None:
                             aplay_proc.terminate()
                     except:
                         pass
                     
                     # Only try fallback if stdout method completely failed
                     if decoder_process is None:
-                        # Fallback A: Try ffmpeg PCM pipeline (also provides decoder levels)
-                        if _start_ffmpeg_pipeline(stream_url, output_device, volume, buffer_secs):
+                        # Fallback A: Try VLC first (best buffering)
+                        if _start_vlc_player(stream_url, output_device, volume, buffer_secs, playback_cache_secs):
+                            decoder_process = decoder_process  # already set
+                            decoder_aplay_process = decoder_aplay_process
+                        # Fallback B: Try ffmpeg PCM pipeline (also provides decoder levels)
+                        elif _start_ffmpeg_pipeline(stream_url, output_device, volume, buffer_secs, playback_cache_secs):
                             decoder_process = decoder_process  # already set
                             decoder_aplay_process = decoder_aplay_process
                         else:
@@ -1281,7 +1502,8 @@ def api_get_decoder_config():
         'url': dec.get('url', ''),
         'outputDevice': dec.get('outputDevice', defaults.get('output', 'default')),
         'volume': dec.get('volume', 75),
-        'bufferSecs': dec.get('bufferSecs', 5)
+        'bufferSecs': dec.get('bufferSecs', 10),  # Increased default
+        'playbackCacheSecs': dec.get('playbackCacheSecs', 3)  # Increased default cache
     })
 
 @app.route('/api/decoder/config', methods=['POST'])
@@ -1294,6 +1516,7 @@ def api_save_decoder_config():
         out_dev = str(payload.get('outputDevice', '')).strip()
         volume_val = payload.get('volume')
         buffer_secs_val = payload.get('bufferSecs')
+        playback_cache_secs_val = payload.get('playbackCacheSecs')
         st = load_status()
         st.setdefault('decoder', {})
         if url_val:
@@ -1304,7 +1527,10 @@ def api_save_decoder_config():
             st['decoder']['volume'] = int(volume_val)
         if buffer_secs_val is not None:
             buffer_secs_int = int(buffer_secs_val)
-            st['decoder']['bufferSecs'] = max(1, min(60, buffer_secs_int))  # Clamp between 1 and 60
+            st['decoder']['bufferSecs'] = max(5, min(120, buffer_secs_int))  # Clamp between 5 and 120
+        if playback_cache_secs_val is not None:
+            playback_cache_int = int(playback_cache_secs_val)
+            st['decoder']['playbackCacheSecs'] = max(0, min(30, playback_cache_int))  # Clamp between 0 and 30
         if save_status(st):
             return jsonify({'success': True, 'message': 'Decoder config saved'})
         return jsonify({'success': False, 'message': 'Failed to save decoder config'}), 500
@@ -1338,7 +1564,7 @@ def api_decoder_stop():
         subprocess.run([pkill_path, '-x', 'vlc'], check=False)
         subprocess.run([pkill_path, '-x', 'ffmpeg'], check=False)
         # Pattern matches, in case names differ
-        subprocess.run([pkill_path, '-f', 'mpg123'], check=False)
+        # Only VLC is used now - no need to kill mpg123
         subprocess.run([pkill_path, '-f', 'aplay'], check=False)
         subprocess.run([pkill_path, '-f', 'cvlc'], check=False)
         subprocess.run([pkill_path, '-f', 'vlc'], check=False)
@@ -1738,71 +1964,13 @@ def api_audio_levels():
     """Get current audio levels"""
     return jsonify(audio_levels)
 
-@app.route('/api/decoder/levels')
-def api_decoder_levels():
-    """Get current decoder audio levels"""
-    return jsonify(decoder_audio_levels)
 
 @app.route('/api/decoder/volume', methods=['POST'])
 @login_required
 def api_decoder_volume():
-    """Set decoder volume (0-100) - requires decoder restart to apply"""
-    try:
-        data = request.get_json()
-        volume = int(data.get('volume', 75))
-        volume = max(0, min(100, volume))  # Clamp between 0 and 100
-        
-        # Save volume to config
-        st = load_status()
-        st.setdefault('decoder', {})
-        st['decoder']['volume'] = volume
-        save_status(st)
-        
-        # Try to apply volume to running decoder if possible
-        # For VLC, we can change volume on the fly
-        global decoder_process
-        try:
-            if decoder_process and decoder_process.poll() is None:
-                # Check if it's VLC (cvlc)
-                cvlc_path = shutil.which('cvlc') or '/usr/bin/cvlc'
-                if decoder_process.args and cvlc_path in decoder_process.args:
-                    # VLC supports runtime volume change via dbus or control interface
-                    # For now, we'll need to restart to apply volume change
-                    # But save the setting for next start
-                    pass
-        except Exception:
-            pass
-        
-        # Also try amixer as fallback for hardware volume
-        try:
-            output_device = st.get('decoder', {}).get('outputDevice', 'default')
-            card_num = None
-            if 'plughw:' in output_device:
-                card_num = output_device.replace('plughw:', '').split(',')[0]
-            elif 'hw:' in output_device:
-                card_num = output_device.replace('hw:', '').split(',')[0]
-            
-            amixer_path = shutil.which('amixer') or '/usr/bin/amixer'
-            if card_num:
-                subprocess.run([amixer_path, '-c', card_num, 'sset', 'Master', f'{volume}%'], 
-                             capture_output=True, timeout=2)
-                subprocess.run([amixer_path, '-c', card_num, 'sset', 'PCM', f'{volume}%'], 
-                             capture_output=True, timeout=2)
-            else:
-                subprocess.run([amixer_path, 'sset', 'Master', f'{volume}%'], 
-                             capture_output=True, timeout=2)
-                subprocess.run([amixer_path, 'sset', 'PCM', f'{volume}%'], 
-                             capture_output=True, timeout=2)
-        except Exception:
-            pass
-        
-        return jsonify({
-            'success': True, 
-            'message': f'Volume set to {volume}% (real-time)', 
-            'volume': volume
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+    """Volume control removed - volume is always set to maximum (100%)"""
+    # Volume is now always 100% - no user control
+    return jsonify({'success': True, 'message': 'Volume is always set to maximum (100%)'})
 
 @app.route('/api/settings/ip')
 def api_get_ip():
@@ -2234,33 +2402,15 @@ if __name__ == '__main__':
     # Note: running, audio_level_thread, decoder_should_run, decoder_supervisor_thread are module-level globals
     running = True
     config = load_config()
+    
+    # Removed: decoder meter thread startup (meter removed)
     audio_level_thread = threading.Thread(target=read_audio_levels, 
                                          args=(config.get('device', 'hw:1,0'), 
                                                int(config.get('sampleRate', 44100))),
                                          daemon=True)
     audio_level_thread.start()
     
-    # Restore decoder state on startup
-    try:
-        st = load_status()
-        dec = st.get('decoder', {})
-        url = dec.get('url', '')
-        # If there's a saved URL, auto-start decoder (resume on restart)
-        if url:
-            decoder_should_run = True
-            # Start decoder in background after a short delay
-            def auto_start_decoder():
-                time.sleep(2.0)  # Wait for app to be ready
-                try:
-                    out_dev = dec.get('outputDevice', '') or _detect_default_devices().get('output', 'default')
-                    volume = dec.get('volume', 75)
-                    if not _start_ffmpeg_pipeline(url, out_dev, volume):
-                        _start_decoder_process(url, out_dev, volume)
-                except:
-                    pass
-            threading.Thread(target=auto_start_decoder, daemon=True).start()
-    except:
-        pass
+    # Auto-start decoder removed - decoder will only start when user clicks "Start Playback" button
     
     # Start decoder supervisor thread (handles auto-reconnect)
     decoder_supervisor_thread = threading.Thread(target=_decoder_supervisor_loop, daemon=True)
