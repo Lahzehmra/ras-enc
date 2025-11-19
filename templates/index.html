@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shoutcast Control Panel - Momento</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .status-bar {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .status-card {
+            flex: 1;
+            min-width: 200px;
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            text-align: center;
+        }
+
+        .status-card h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+
+        .status-indicator.active {
+            background: #10b981;
+            box-shadow: 0 0 10px #10b981;
+        }
+
+        .status-indicator.inactive {
+            background: #ef4444;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Tab Styles */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .tab-button {
+            padding: 12px 24px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: none;
+            border-radius: 8px 8px 0 0;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 500;
+            transition: all 0.3s;
+            border-bottom: 3px solid transparent;
+        }
+
+        .tab-button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .tab-button.active {
+            background: white;
+            color: #667eea;
+            border-bottom: 3px solid #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @media (max-width: 1024px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .panel {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .panel h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #059669;
+            transform: translateY(-2px);
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .message {
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .message.success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 1px solid #10b981;
+        }
+
+        .message.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #ef4444;
+        }
+
+        .message.show {
+            display: block;
+        }
+
+        .audio-devices {
+            background: #f9fafb;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-family: monospace;
+            font-size: 0.9em;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .refresh-btn {
+            background: #6b7280;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+
+        .refresh-btn:hover {
+            background: #4b5563;
+        }
+
+
+        .icecast-controls {
+            background: #f3f4f6;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+
+        .icecast-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: #e5e7eb;
+            border-radius: 6px;
+            font-size: 0.9em;
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+
+            .status-bar {
+                flex-direction: column;
+            }
+
+            .header h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎵 Shoutcast Control Panel</h1>
+            <p>Momento Audio Streaming & Playback</p>
+            <nav style="margin-top: 20px;">
+                <a href="/" style="color: white; margin: 0 15px; text-decoration: none; padding: 8px 15px; background: rgba(255,255,255,0.2); border-radius: 5px;">🏠 Home</a>
+                <a href="/settings" style="color: white; margin: 0 15px; text-decoration: none; padding: 8px 15px; background: rgba(255,255,255,0.2); border-radius: 5px;">⚙️ Settings</a>
+            </nav>
+        </div>
+
+        <div class="status-bar">
+            <div class="status-card">
+                <h3>Encoder Status</h3>
+                <div>
+                    <span class="status-indicator" id="encoder-status"></span>
+                    <span id="encoder-text">Checking...</span>
+                </div>
+            </div>
+            <div class="status-card">
+                <h3>Decoder Status</h3>
+                <div>
+                    <span class="status-indicator" id="decoder-status"></span>
+                    <span id="decoder-text">Checking...</span>
+                </div>
+            </div>
+            <div class="status-card">
+                <h3>Icecast Server</h3>
+                <div>
+                    <span class="status-indicator" id="icecast-status"></span>
+                    <span id="icecast-text">Checking...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <!-- Left Sidebar -->
+            <div class="sidebar">
+                <!-- Login Panel -->
+                <div class="panel" id="login-panel">
+                    <h2>🔐 Login</h2>
+                    <form id="login-form">
+                        <div class="form-group">
+                            <label>Username</label>
+                            <input type="text" id="login-username" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Password</label>
+                            <input type="password" id="login-password" required>
+                        </div>
+                        <button type="button" class="btn btn-primary" onclick="login()" style="width: 100%;">Login</button>
+                        <div class="message" id="login-message"></div>
+                    </form>
+                </div>
+                
+                <!-- Logout Panel (hidden initially) -->
+                <div class="panel" id="logout-panel" style="display: none;">
+                    <h2>👤 Logged In</h2>
+                    <p id="logged-in-user" style="margin-bottom: 15px;"></p>
+                    <button type="button" class="btn btn-danger" onclick="logout()" style="width: 100%;">Logout</button>
+                </div>
+            </div>
+            
+            <!-- Main Content Area -->
+            <div>
+            <!-- Tabs Navigation -->
+            <div class="tabs">
+                <button class="tab-button active" onclick="switchTab('decoder')">🔊 Decoder</button>
+                <button class="tab-button" onclick="switchTab('encoder')">📡 Encoder</button>
+                <button class="tab-button" onclick="switchTab('server')">🖥️ Server</button>
+            </div>
+
+            <!-- Decoder Tab -->
+            <div id="tab-decoder" class="tab-content active">
+                <div class="panel">
+                    <h2>🔊 Decoder (Playback)</h2>
+                    <form id="decoder-form">
+                            <div class="form-group">
+                                <label>Stream URL</label>
+                                <input type="url" id="stream-url" name="stream-url" 
+                                       placeholder="http://server.com:8000/stream" required
+                                       oninput="saveStreamUrl()" onblur="saveStreamUrl()">
+                                <small style="color: #6b7280; display: block; margin-top: 5px;">
+                                    URL is automatically saved when you type and restored on page refresh
+                                </small>
+                            </div>
+                        <div class="form-group">
+                            <label>Buffer Size (seconds)</label>
+                            <input type="number" id="decoder-buffer-secs" name="decoder-buffer-secs" value="5" min="1" max="60" step="1" required>
+                            <small style="color: #6b7280; display: block; margin-top: 5px;">
+                                Audio buffer size in seconds (1-60). Larger values reduce dropouts but increase latency. Decoder will auto-resume if it stops.
+                            </small>
+                        </div>
+                        <div class="form-group">
+                            <label>Output Device (ALSA)</label>
+                            <select id="output-device" name="output-device"></select>
+                            <button type="button" class="refresh-btn" onclick="loadAudioDevices()">Refresh Devices</button>
+                            <small style="color: #6b7280; display: block; margin-top: 5px;">
+                                USB devices are preferred by default. Use Refresh Devices to update list.
+                            </small>
+                        </div>
+                        <div class="button-group">
+                            <button type="button" class="btn btn-success" id="decoder-start" onclick="startDecoder()">Start Playback</button>
+                            <button type="button" class="btn btn-danger" id="decoder-stop" onclick="stopDecoder()" disabled>Stop Playback</button>
+                        </div>
+                        <div class="message" id="decoder-message"></div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Encoder Tab -->
+            <div id="tab-encoder" class="tab-content">
+                <div class="panel">
+                    <h2>📡 Encoder (Streaming)</h2>
+                    <form id="encoder-form">
+                        <div class="form-group">
+                            <label>Server Address</label>
+                            <input type="text" id="server" name="server" placeholder="localhost or your-server.com" required>
+                            <small style="color: #6b7280; display: block; margin-top: 5px;">
+                                Use "localhost" for built-in Icecast server
+                            </small>
+                        </div>
+                        <div class="form-group">
+                            <label>Port</label>
+                            <input type="number" id="port" name="port" value="8000" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Password</label>
+                            <input type="password" id="password" name="password" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Mount Point</label>
+                            <input type="text" id="mountPoint" name="mountPoint" value="/stream" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Stream Name</label>
+                            <input type="text" id="streamName" name="streamName" value="Momento Stream">
+                        </div>
+                        <div class="form-group">
+                            <label>Bitrate (kbps)</label>
+                            <select id="bitrate" name="bitrate">
+                                <option value="64">64</option>
+                                <option value="96">96</option>
+                                <option value="128" selected>128</option>
+                                <option value="192">192</option>
+                                <option value="256">256</option>
+                                <option value="320">320</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Sample Rate (Hz)</label>
+                            <select id="sampleRate" name="sampleRate">
+                                <option value="22050">22050</option>
+                                <option value="44100" selected>44100</option>
+                                <option value="48000">48000</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Buffer Size (seconds)</label>
+                            <input type="number" id="bufferSecs" name="bufferSecs" value="5" min="1" max="60" step="1" required>
+                            <small style="color: #6b7280; display: block; margin-top: 5px;">
+                                Audio buffer size in seconds (1-60). Larger values reduce dropouts but increase latency.
+                            </small>
+                        </div>
+                        <div class="form-group">
+                            <label>Input Device (ALSA)</label>
+                            <select id="device" name="device" required></select>
+                            <button type="button" class="refresh-btn" onclick="loadAudioDevices()">Refresh Devices</button>
+                            <div class="audio-devices" id="audio-devices" style="display:none;"></div>
+                        </div>
+                        <div class="button-group">
+                            <button type="button" class="btn btn-success" id="encoder-start" onclick="startEncoder()">Start Streaming</button>
+                            <button type="button" class="btn btn-danger" id="encoder-stop" onclick="stopEncoder()" disabled>Stop Streaming</button>
+                        </div>
+                        <div class="message" id="encoder-message"></div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Server Tab -->
+            <div id="tab-server" class="tab-content">
+                <div class="panel">
+                    <h2>🖥️ Icecast Server</h2>
+                    <div class="icecast-controls">
+                        <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 20px;">
+                            <button type="button" class="btn btn-success" id="icecast-start" onclick="startIcecast()" style="flex: 1; padding: 10px;">Start Server</button>
+                            <button type="button" class="btn btn-danger" id="icecast-stop" onclick="stopIcecast()" style="flex: 1; padding: 10px;" disabled>Stop Server</button>
+                        </div>
+                        <div class="icecast-info" id="icecast-info" style="display: none;">
+                            <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin-top: 15px;">
+                                <strong>Stream URL:</strong> <a href="http://192.168.1.114:8000/stream" target="_blank" id="stream-url-link" style="color: #667eea; text-decoration: underline;">http://192.168.1.114:8000/stream</a><br>
+                                <strong>Admin Interface:</strong> <a href="http://192.168.1.114:8000/admin/" target="_blank" style="color: #667eea; text-decoration: underline;">http://192.168.1.114:8000/admin/</a><br>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let statusInterval;
+
+        // Tab switching function
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            // Remove active class from all buttons
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            // Show selected tab
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            // Activate selected button (find the button that was clicked)
+            event.target.classList.add('active');
+        }
+
+        // Load configuration on page load
+        window.addEventListener('DOMContentLoaded', async () => {
+            await checkAuthStatus();
+            loadConfig();
+            updateStatus();
+            // Status updates (indicators only) - less frequent to prevent flashing
+            statusInterval = setInterval(updateStatus, 3000);  // Every 3 seconds (reduced flashing)
+            
+            // Load decoder config (URL, device) - always load saved values
+            populateDeviceDropdowns().then(() => {
+                // Small delay to ensure device dropdown is populated before setting device
+                setTimeout(loadDecoderConfig, 100);
+            }).catch(() => {
+                setTimeout(loadDecoderConfig, 100);
+            });
+        });
+
+        let isLoggedIn = false;
+
+        async function checkAuthStatus() {
+            try {
+                const response = await fetch('/api/auth/status');
+                const auth = await response.json();
+                isLoggedIn = auth.logged_in || false;
+                updateLoginUI();
+            } catch (error) {
+                console.error('Error checking auth status:', error);
+                isLoggedIn = false;
+                updateLoginUI();
+            }
+        }
+
+        function updateLoginUI() {
+            const loginPanel = document.getElementById('login-panel');
+            const logoutPanel = document.getElementById('logout-panel');
+            
+            // Get all controls that should be disabled
+            const allInputs = document.querySelectorAll('input, select, button[id], button[onclick]');
+            const controlButtons = [
+                'encoder-start', 'encoder-stop', 'decoder-start', 'decoder-stop',
+                'icecast-start', 'icecast-stop', 'save-config', 'refresh-devices'
+            ];
+            
+            if (isLoggedIn) {
+                if (loginPanel) loginPanel.style.display = 'none';
+                if (logoutPanel) logoutPanel.style.display = 'block';
+                
+                // Enable all controls
+                allInputs.forEach(el => {
+                    if (el.tagName === 'BUTTON' && controlButtons.includes(el.id)) {
+                        el.disabled = false;
+                    } else if (el.tagName === 'INPUT' || el.tagName === 'SELECT') {
+                        el.disabled = false;
+                        el.style.opacity = '1';
+                        el.style.pointerEvents = 'auto';
+                    }
+                });
+            } else {
+                if (loginPanel) loginPanel.style.display = 'block';
+                if (logoutPanel) logoutPanel.style.display = 'none';
+                
+                // Disable all controls except login form
+                allInputs.forEach(el => {
+                    const isLoginForm = el.closest('#login-form') || el.id === 'login-username' || el.id === 'login-password' || el.onclick && el.onclick.toString().includes('login');
+                    
+                    if (!isLoginForm) {
+                        if (el.tagName === 'BUTTON' && controlButtons.includes(el.id)) {
+                            el.disabled = true;
+                        } else if (el.tagName === 'INPUT' || el.tagName === 'SELECT') {
+                            el.disabled = true;
+                            el.style.opacity = '0.5';
+                            el.style.pointerEvents = 'none';
+                        }
+                    }
+                });
+            }
+        }
+
+        async function login() {
+            const username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+            
+            if (!username || !password) {
+                alert('Please enter username and password');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username: username, password: password})
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    isLoggedIn = true;
+                    updateLoginUI();
+                    document.getElementById('login-username').value = '';
+                    document.getElementById('login-password').value = '';
+                    alert('Login successful!');
+                } else {
+                    alert('Login failed: ' + result.message);
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function logout() {
+            try {
+                const response = await fetch('/api/logout', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                const result = await response.json();
+                
+                isLoggedIn = false;
+                updateLoginUI();
+                alert('Logged out successfully');
+            } catch (error) {
+                console.error('Logout error:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                const config = await response.json();
+                
+                document.getElementById('server').value = config.server || '';
+                document.getElementById('port').value = config.port || '8000';
+                document.getElementById('password').value = config.password || '';
+                document.getElementById('mountPoint').value = config.mountPoint || '/stream';
+                document.getElementById('streamName').value = config.streamName || 'Momento Stream';
+                document.getElementById('bitrate').value = config.bitrate || '128';
+                document.getElementById('sampleRate').value = config.sampleRate || '44100';
+                document.getElementById('bufferSecs').value = config.bufferSecs || '5';
+                document.getElementById('device').value = config.device || 'hw:1,0';
+            } catch (error) {
+                console.error('Error loading config:', error);
+            }
+        }
+
+        async function saveConfig() {
+            const config = {
+                server: document.getElementById('server').value,
+                port: document.getElementById('port').value,
+                password: document.getElementById('password').value,
+                mountPoint: document.getElementById('mountPoint').value,
+                streamName: document.getElementById('streamName').value,
+                bitrate: document.getElementById('bitrate').value,
+                sampleRate: document.getElementById('sampleRate').value,
+                bufferSecs: document.getElementById('bufferSecs').value,
+                device: document.getElementById('device').value
+            };
+
+            try {
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(config)
+                });
+                const result = await response.json();
+                return result.success;
+            } catch (error) {
+                console.error('Error saving config:', error);
+                return false;
+            }
+        }
+
+        async function updateStatus() {
+            try {
+                // Check auth status
+                await checkAuthStatus();
+                
+                const response = await fetch('/api/status');
+                const status = await response.json();
+                
+                // Update encoder status
+                const encoderStatus = status.encoder;
+                const encoderIndicator = document.getElementById('encoder-status');
+                const encoderText = document.getElementById('encoder-text');
+                const encoderStart = document.getElementById('encoder-start');
+                const encoderStop = document.getElementById('encoder-stop');
+                
+                // Update encoder status
+                if (encoderIndicator && encoderText && encoderStart && encoderStop) {
+                    const isRunning = encoderStatus === true || encoderStatus === 'true' || encoderStatus === 'True' || encoderStatus === 1 || encoderStatus === '1';
+                    
+                    // Always update to ensure correct state
+                    if (isRunning) {
+                        encoderIndicator.className = 'status-indicator active';
+                        encoderText.textContent = 'Running';
+                        encoderStart.disabled = true;
+                        encoderStop.disabled = false;
+                    } else {
+                        encoderIndicator.className = 'status-indicator inactive';
+                        encoderText.textContent = 'Stopped';
+                        encoderStart.disabled = false;
+                        encoderStop.disabled = true;
+                    }
+                }
+                
+                // Update decoder status
+                const decoderStatus = status.decoder;
+                const decoderIndicator = document.getElementById('decoder-status');
+                const decoderText = document.getElementById('decoder-text');
+                const decoderStart = document.getElementById('decoder-start');
+                const decoderStop = document.getElementById('decoder-stop');
+                
+                if (decoderIndicator && decoderText && decoderStart && decoderStop) {
+                    // Check if decoder is playing (handle various formats)
+                    const isPlaying = decoderStatus === true || decoderStatus === 'true' || decoderStatus === 'True' || decoderStatus === 1 || decoderStatus === '1';
+                    
+                    // Always update to ensure correct state
+                    if (isPlaying) {
+                        decoderIndicator.className = 'status-indicator active';
+                        decoderText.textContent = 'Playing';
+                        decoderStart.disabled = true;
+                        decoderStop.disabled = false;
+                    } else {
+                        decoderIndicator.className = 'status-indicator inactive';
+                        decoderText.textContent = 'Stopped';
+                        decoderStart.disabled = false;
+                        decoderStop.disabled = true;
+                    }
+                }
+                
+                // Update Icecast status
+                const icecastStatus = status.icecast;
+                const icecastIndicator = document.getElementById('icecast-status');
+                const icecastText = document.getElementById('icecast-text');
+                const icecastStart = document.getElementById('icecast-start');
+                const icecastStop = document.getElementById('icecast-stop');
+                const icecastInfo = document.getElementById('icecast-info');
+                
+                if (icecastIndicator && icecastText && icecastStart && icecastStop) {
+                    const isRunning = icecastStatus === true || icecastStatus === 'true' || icecastStatus === 'True' || icecastStatus === 1 || icecastStatus === '1';
+                    
+                    // Always update to ensure correct state
+                    if (isRunning) {
+                        icecastIndicator.className = 'status-indicator active';
+                        icecastText.textContent = 'Running';
+                        icecastStart.disabled = true;
+                        icecastStop.disabled = false;
+                        if (icecastInfo) {
+                            icecastInfo.style.display = 'block';
+                        }
+                        // Update stream URL link with current IP
+                        updateStreamUrl();
+                    } else {
+                        icecastIndicator.className = 'status-indicator inactive';
+                        icecastText.textContent = 'Stopped';
+                        icecastStart.disabled = false;
+                        icecastStop.disabled = true;
+                        if (icecastInfo) {
+                            icecastInfo.style.display = 'none';
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error updating status:', error);
+            }
+        }
+
+        // Simple audio meter update function
+
+
+        async function startEncoder() {
+            if (!isLoggedIn) {
+                showMessage('encoder-message', 'Please login first', 'error');
+                return;
+            }
+            
+            const saved = await saveConfig();
+            if (!saved) {
+                showMessage('encoder-message', 'Failed to save configuration', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/encoder/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('encoder-message', result.message, 'success');
+                    updateStatus();
+                } else {
+                    showMessage('encoder-message', result.message, 'error');
+                }
+            } catch (error) {
+                showMessage('encoder-message', 'Error starting encoder: ' + error.message, 'error');
+            }
+        }
+
+        async function stopEncoder() {
+            try {
+                const response = await fetch('/api/encoder/stop', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('encoder-message', result.message, 'success');
+                    updateStatus();
+                } else {
+                    showMessage('encoder-message', result.message, 'error');
+                }
+            } catch (error) {
+                showMessage('encoder-message', 'Error stopping encoder: ' + error.message, 'error');
+            }
+        }
+
+        async function startDecoder() {
+            if (!isLoggedIn) {
+                showMessage('decoder-message', 'Please login first', 'error');
+                return;
+            }
+            
+            const streamUrl = document.getElementById('stream-url').value;
+            const outputDevice = (document.getElementById('output-device').value || '').trim();
+            const bufferSecs = parseInt(document.getElementById('decoder-buffer-secs').value) || 5;
+            if (!streamUrl) {
+                showMessage('decoder-message', 'Please enter a stream URL', 'error');
+                return;
+            }
+
+            try {
+                // Save to localStorage immediately (backup)
+                try {
+                    localStorage.setItem('decoder_stream_url', streamUrl);
+                } catch (e) {}
+                
+                // Save decoder config to server FIRST (persist URL/output device/buffer) - always save
+                await fetch('/api/decoder/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({url: streamUrl, outputDevice: outputDevice || 'default', bufferSecs: bufferSecs})
+                }).catch(() => {});
+
+                const response = await fetch('/api/decoder/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({url: streamUrl, outputDevice: outputDevice || 'default'})
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('decoder-message', result.message, 'success');
+                    updateStatus();
+                } else {
+                    showMessage('decoder-message', result.message, 'error');
+                }
+            } catch (error) {
+                showMessage('decoder-message', 'Error starting decoder: ' + error.message, 'error');
+            }
+        }
+
+        async function stopDecoder() {
+            try {
+                const response = await fetch('/api/decoder/stop', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('decoder-message', result.message, 'success');
+                    updateStatus();
+                } else {
+                    showMessage('decoder-message', result.message, 'error');
+                }
+            } catch (error) {
+                showMessage('decoder-message', 'Error stopping decoder: ' + error.message, 'error');
+            }
+        }
+
+        async function restartDecoder() {
+            if (!isLoggedIn) {
+                showMessage('decoder-message', 'Please login first', 'error');
+                return;
+            }
+            
+            // Stop first, then start
+            try {
+                await stopDecoder();
+                // Wait a moment for processes to fully stop
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                // Then start
+                await startDecoder();
+            } catch (error) {
+                showMessage('decoder-message', 'Error restarting decoder: ' + error.message, 'error');
+            }
+        }
+
+        async function loadAudioDevices() {
+            try {
+                const [listResp, defResp] = await Promise.all([
+                    fetch('/api/settings/audio-devices'),
+                    fetch('/api/audio/defaults')
+                ]);
+                const list = await listResp.json();
+                const defs = await defResp.json();
+
+                // Populate input (encoder) device select
+                const inputSelect = document.getElementById('device');
+                inputSelect.innerHTML = '';
+                const inputDevices = (list.input || []).map(d => ({
+                    label: `${d.name} (${d.alsa_id})`.trim(),
+                    value: (d.alsa_id || '').startsWith('hw:') ? d.alsa_id : `hw:${d.card},0`
+                }));
+                const seenIn = new Set();
+                for (const dev of inputDevices) {
+                    if (!dev.value) continue;
+                    if (seenIn.has(dev.value)) continue;
+                    seenIn.add(dev.value);
+                    const opt = document.createElement('option');
+                    opt.value = dev.value;
+                    opt.textContent = dev.label;
+                    inputSelect.appendChild(opt);
+                }
+                // Default for input
+                const inDefault = defs.input || 'hw:1,0';
+                const inOpt = Array.from(inputSelect.options).find(o => o.value === inDefault);
+                inputSelect.value = inOpt ? inDefault : (inputSelect.options[0]?.value || 'hw:1,0');
+
+                // Populate output (decoder) device select
+                const outputSelect = document.getElementById('output-device');
+                outputSelect.innerHTML = '';
+                const defaultOpt = document.createElement('option');
+                defaultOpt.value = 'default';
+                defaultOpt.textContent = 'default (system default)';
+                outputSelect.appendChild(defaultOpt);
+
+                const outputDevices = (list.output || []).map(d => ({
+                    label: `${d.name} (plughw:${d.card},0)`,
+                    value: `plughw:${d.card},0`
+                }));
+                const seenOut = new Set(['default']);
+                for (const dev of outputDevices) {
+                    if (!dev.value) continue;
+                    if (seenOut.has(dev.value)) continue;
+                    seenOut.add(dev.value);
+                    const opt = document.createElement('option');
+                    opt.value = dev.value;
+                    opt.textContent = dev.label;
+                    outputSelect.appendChild(opt);
+                }
+                // Default for output
+                const outDefault = defs.output || 'default';
+                const outOpt = Array.from(outputSelect.options).find(o => o.value === outDefault);
+                outputSelect.value = outOpt ? outDefault : 'default';
+
+                // Show human-readable list
+                const devicesDiv = document.getElementById('audio-devices');
+                const rawInput = (list.input || []).map(d => `${d.card}: ${d.name} [${d.alsa_id}]`).join('\\n');
+                const rawOutput = (list.output || []).map(d => `${d.card}: ${d.name} [plughw:${d.card},0]`).join('\\n');
+                devicesDiv.innerHTML = '<strong>Input Devices:</strong><br>' + 
+                    rawInput.replace(/\\n/g, '<br>') + 
+                    '<br><br><strong>Output Devices:</strong><br>' + 
+                    rawOutput.replace(/\\n/g, '<br>');
+                devicesDiv.style.display = 'block';
+            } catch (error) {
+                console.error('Error loading devices:', error);
+            }
+        }
+
+        async function populateDeviceDropdowns() {
+            await loadAudioDevices();
+        }
+
+        async function loadDecoderConfig() {
+            const urlField = document.getElementById('stream-url');
+            const bufferField = document.getElementById('decoder-buffer-secs');
+            
+            // First, try to load from server (if logged in and server has it)
+            try {
+                const resp = await fetch('/api/decoder/config');
+                const cfg = await resp.json();
+                const url = cfg.url || '';
+                const outDev = cfg.outputDevice || '';
+                const bufferSecs = cfg.bufferSecs || 5;
+                
+                // Always restore saved URL from server if available
+                if (url && urlField) {
+                    urlField.value = url;
+                    // Also update localStorage to keep it in sync
+                    try {
+                        localStorage.setItem('decoder_stream_url', url);
+                    } catch (e) {}
+                }
+                
+                if (outDev) {
+                    const outSel = document.getElementById('output-device');
+                    if (outSel) {
+                        const match = Array.from(outSel.options).find(o => o.value === outDev);
+                        if (match) {
+                            outSel.value = outDev;
+                        }
+                    }
+                }
+                
+                // Set buffer size if available
+                if (bufferField) {
+                    bufferField.value = bufferSecs;
+                }
+            } catch (e) {
+                // If server load fails, try localStorage
+                console.log('Server config load failed, trying localStorage');
+            }
+            
+            // Fallback: Load from localStorage if server didn't have it or field is still empty
+            if (urlField && !urlField.value) {
+                try {
+                    const savedUrl = localStorage.getItem('decoder_stream_url');
+                    if (savedUrl) {
+                        urlField.value = savedUrl;
+                        console.log('Loaded URL from localStorage:', savedUrl);
+                    }
+                } catch (e) {
+                    console.error('Failed to load URL from localStorage:', e);
+                }
+            }
+        }
+
+        // Auto-save URL when user types (debounced)
+        let urlSaveTimeout = null;
+        async function saveStreamUrl() {
+            const urlField = document.getElementById('stream-url');
+            if (!urlField) return;
+            
+            const url = urlField.value.trim();
+            
+            // Always save to localStorage immediately (works even when not logged in)
+            if (url) {
+                try {
+                    localStorage.setItem('decoder_stream_url', url);
+                } catch (e) {
+                    console.error('Failed to save URL to localStorage:', e);
+                }
+            }
+            
+            // If logged in, also save to server
+            if (!isLoggedIn || !url) return;
+            
+            // Clear existing timeout
+            if (urlSaveTimeout) {
+                clearTimeout(urlSaveTimeout);
+            }
+            
+            // Debounce: save to server 1 second after user stops typing
+            urlSaveTimeout = setTimeout(async () => {
+                try {
+                    const response = await fetch('/api/decoder/config', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({url: url})
+                    });
+                    const result = await response.json();
+                    if (result.success) {
+                        console.log('Stream URL auto-saved to server:', url);
+                    } else {
+                        console.error('Failed to save URL to server:', result.message);
+                    }
+                } catch (e) {
+                    console.error('Failed to auto-save URL:', e);
+                }
+            }, 1000);
+        }
+
+
+        async function startIcecast() {
+            if (!isLoggedIn) {
+                showMessage('encoder-message', 'Please login first', 'error');
+                return;
+            }
+            
+            const startButton = document.getElementById('icecast-start');
+            const originalText = startButton.textContent;
+            startButton.disabled = true;
+            startButton.textContent = 'Starting...';
+            
+            try {
+                const response = await fetch('/api/icecast/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('encoder-message', result.message, 'success');
+                    // Wait a bit then update status to ensure UI reflects the change
+                    setTimeout(() => {
+                        updateStatus();
+                    }, 1000);
+                    // Update server field to localhost
+                    document.getElementById('server').value = 'localhost';
+                } else {
+                    showMessage('encoder-message', result.message, 'error');
+                    // Still update status in case it actually started
+                    setTimeout(() => {
+                        updateStatus();
+                    }, 500);
+                }
+            } catch (error) {
+                showMessage('encoder-message', 'Error starting Icecast: ' + error.message, 'error');
+                updateStatus();
+            } finally {
+                startButton.disabled = false;
+                startButton.textContent = originalText;
+            }
+        }
+
+        async function stopIcecast() {
+            if (!isLoggedIn) {
+                showMessage('encoder-message', 'Please login first', 'error');
+                return;
+            }
+            
+            const stopButton = document.getElementById('icecast-stop');
+            const originalText = stopButton.textContent;
+            stopButton.disabled = true;
+            stopButton.textContent = 'Stopping...';
+            
+            try {
+                const response = await fetch('/api/icecast/stop', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('encoder-message', result.message, 'success');
+                    // Wait a bit then update status to ensure UI reflects the change
+                    setTimeout(() => {
+                        updateStatus();
+                    }, 500);
+                } else {
+                    showMessage('encoder-message', result.message, 'error');
+                    // Still update status in case it actually stopped
+                    setTimeout(() => {
+                        updateStatus();
+                    }, 500);
+                }
+            } catch (error) {
+                showMessage('encoder-message', 'Error stopping Icecast: ' + error.message, 'error');
+                updateStatus();
+            } finally {
+                stopButton.disabled = false;
+                stopButton.textContent = originalText;
+            }
+        }
+
+        async function updateStreamUrl() {
+            try {
+                const response = await fetch('/api/settings/ip');
+                const data = await response.json();
+                const ip = data.ip || '192.168.1.114';
+                const streamUrl = `http://${ip}:8000/stream`;
+                const adminUrl = `http://${ip}:8000/admin/`;
+                
+                const streamLink = document.getElementById('stream-url-link');
+                const streamDisplay = document.getElementById('stream-url-display');
+                if (streamLink) {
+                    streamLink.href = streamUrl;
+                    streamLink.textContent = streamUrl;
+                }
+                if (streamDisplay) {
+                    streamDisplay.textContent = streamUrl;
+                }
+                
+                // Update admin link
+                const adminLinks = document.querySelectorAll('a[href*=":8000/admin"]');
+                adminLinks.forEach(link => {
+                    link.href = adminUrl;
+                    if (link.textContent.includes('admin')) {
+                        link.textContent = adminUrl;
+                    }
+                });
+            } catch (error) {
+                console.error('Error updating stream URL:', error);
+            }
+        }
+
+        function showMessage(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `message ${type} show`;
+            setTimeout(() => {
+                element.classList.remove('show');
+            }, 5000);
+        }
+
+        // Clean up intervals on page unload
+        window.addEventListener('beforeunload', () => {
+            if (statusInterval) clearInterval(statusInterval);
+        });
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,24 @@
+[Unit]
+Description=Shoutcast/Icecast Stream Player
+After=network.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=audio
+WorkingDirectory=/home/pi/Raspbery
+ExecStart=/usr/bin/mpg123 -v -C http://your-server.com:8000/stream
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+
+

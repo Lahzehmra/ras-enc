@@ -1,0 +1,107 @@
+# Darkice Configuration File for Shoutcast/Icecast Streaming
+# Copy this file to darkice.conf and edit with your server details
+
+[general]
+# Duration in seconds, 0 = infinite
+duration = 0
+
+# Buffer size in seconds
+bufferSecs = 5
+
+# Reconnect automatically if connection is lost
+reconnect = yes
+
+# Reconnect delay in seconds
+reconnectDelay = 5
+
+# Log file (optional)
+# logFile = /var/log/darkice.log
+
+# Log level: 0=error, 1=warn, 2=info, 3=debug
+logLevel = 2
+
+[input]
+# Audio input device
+# Use 'arecord -l' to find your device
+# Format: hw:CARD,DEVICE or plughw:CARD,DEVICE
+# Example: hw:1,0 or plughw:1,0
+device = hw:1,0
+
+# Sample rate in Hz (44100 is CD quality, 48000 is professional)
+sampleRate = 44100
+
+# Bits per sample (16 or 24)
+bitsPerSample = 16
+
+# Number of channels (1=mono, 2=stereo)
+channel = 2
+
+# For USB sound cards, you might need:
+# device = plughw:1,0
+
+# For ALSA default device:
+# device = default
+
+# For PulseAudio (if installed):
+# device = pulse
+
+[icecast2-0]
+# Bitrate mode: cbr (constant) or vbr (variable)
+bitrateMode = cbr
+
+# Bitrate in kbps (64, 96, 128, 192, 256, 320)
+# Lower = less bandwidth, Lower quality
+# Higher = more bandwidth, Better quality
+bitrate = 128
+
+# Audio format: mp3 or vorbis
+format = mp3
+
+# Server hostname or IP address
+server = your-server.com
+
+# Server port (default: 8000 for Icecast, 8000-8001 for Shoutcast)
+port = 8000
+
+# Server password (from your Icecast/Shoutcast server config)
+password = yourpassword
+
+# Mount point (the stream path)
+# For Icecast: /stream-name
+# For Shoutcast: usually / or /stream
+mountPoint = /stream
+
+# Stream name (displayed in players)
+name = Raspberry Pi Stream
+
+# Stream description
+description = Audio stream from Raspberry Pi 5
+
+# Stream genre
+genre = Various
+
+# Stream URL (your website)
+url = http://your-server.com
+
+# Public stream (yes/no)
+public = yes
+
+# Local stream (yes/no)
+localDumpFile = /tmp/stream_dump.mp3
+
+# Alternative: Shoutcast v1 protocol
+# Uncomment and configure if using Shoutcast v1
+# [shoutcast-0]
+# bitrateMode = cbr
+# bitrate = 128
+# format = mp3
+# server = your-server.com
+# port = 8000
+# password = yourpassword
+# name = Raspberry Pi Stream
+# description = Audio stream from Raspberry Pi 5
+# url = http://your-server.com
+# genre = Various
+# public = yes
+
+

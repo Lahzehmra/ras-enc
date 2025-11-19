@@ -1,0 +1,56 @@
+=========================================
+Shoutcast Web UI - Clean Installation
+Raspberry Pi OS Setup
+=========================================
+
+[1/8] Updating system packages...
+
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+
+Hit:1 http://deb.debian.org/debian trixie InRelease
+Hit:2 http://archive.raspberrypi.com/debian trixie InRelease
+Hit:3 http://deb.debian.org/debian trixie-updates InRelease
+Hit:4 http://deb.debian.org/debian-security trixie-security InRelease
+Reading package lists...
+Building dependency tree...
+Reading state information...
+All packages are up to date.
+
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+
+Reading package lists...
+Building dependency tree...
+Reading state information...
+Calculating upgrade...
+The following package was automatically installed and is no longer required:
+  libyuv0
+Use 'sudo apt autoremove' to remove it.
+
+Summary:
+  Upgrading: 0, Installing: 0, Removing: 0, Not Upgrading: 0
+
+[2/8] Installing Python and dependencies...
+
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+
+Reading package lists...
+Building dependency tree...
+Reading state information...
+python3 is already the newest version (3.13.5-1).
+python3-pip is already the newest version (25.1.1+dfsg-1).
+python3-venv is already the newest version (3.13.5-1).
+The following package was automatically installed and is no longer required:
+  libyuv0
+Use 'sudo apt autoremove' to remove it.
+
+Summary:
+  Upgrading: 0, Installing: 0, Removing: 0, Not Upgrading: 0
+
+[3/8] Installing audio libraries...
+
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+
+Reading package lists...
+Building dependency tree...
+Reading state information...
+Error: Unable to locate package alsa-base
